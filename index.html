@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Cinderwake</title>
+<meta name="description" content="Cinderwake is a dash-combat roguelite. You are the last lantern in an ink-dark world, and your movement is your only weapon.">
+<meta name="theme-color" content="#101219">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23101219'/%3E%3Cpath d='M16 4l8 12-8 12-8-12z' fill='%23ff9a3d'/%3E%3Cpath d='M16 10l4 6-4 6-4-6z' fill='%23ffd98a'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <canvas id="game" aria-label="Cinderwake arena"></canvas>
+
+  <!-- In-run heads-up display -->
+  <div id="hud" class="hud" hidden>
+    <div class="hud-left">
+      <div id="hudHearts" class="hearts" role="img" aria-label="Hearts"></div>
+      <div class="flame" role="img" aria-label="Flame">
+        <div id="hudFlame" class="flame-fill"></div>
+        <div id="hudFlameTicks" class="flame-ticks"></div>
+      </div>
+      <div id="hudBuild" class="build"></div>
+    </div>
+    <div class="hud-mid">
+      <div id="hudWave" class="wave"></div>
+      <div id="hudLeft" class="left"></div>
+      <div id="hudBoss" class="boss" hidden>
+        <span id="hudBossName"></span>
+        <div class="boss-bar"><i id="hudBossFill"></i></div>
+      </div>
+    </div>
+    <div class="hud-right">
+      <div id="hudScore" class="score">0</div>
+      <div id="hudCombo" class="combo"><span id="hudComboN"></span><div class="combo-bar"><i id="hudComboFill"></i></div></div>
+    </div>
+    <button id="btnPause" class="pause-btn" type="button" aria-label="Pause"></button>
+    <div id="banner" class="banner" aria-live="polite"><div id="bannerTitle" class="banner-title"></div><div id="bannerSub" class="banner-sub"></div></div>
+    <div id="hint" class="hint" aria-live="polite"></div>
+  </div>
+
+  <div id="screens">
+    <!-- Main menu -->
+    <section id="scr-main" class="screen screen-main" hidden>
+      <div class="main-col">
+        <h1 class="mark" aria-label="Cinderwake">
+          <span class="mark-top" aria-hidden="true">Cinderwake</span>
+          <span class="mark-bot" aria-hidden="true">Cinderwake</span>
+          <i class="mark-cut" aria-hidden="true"></i>
+        </h1>
+        <p class="main-line">Your movement is your weapon.</p>
+        <nav class="menu" aria-label="Main menu">
+          <button type="button" class="menu-item menu-primary" data-act="play" data-autofocus>Begin a run</button>
+          <button type="button" class="menu-item" data-act="continue" id="btnContinue" hidden>Continue</button>
+          <button type="button" class="menu-item" data-act="hearth">The Hearth <span id="hearthNote" class="menu-note"></span></button>
+          <button type="button" class="menu-item" data-go="how">How to play</button>
+          <button type="button" class="menu-item" data-go="stats">Statistics</button>
+          <button type="button" class="menu-item" data-go="ach">Achievements <span id="achNote" class="menu-note"></span></button>
+          <button type="button" class="menu-item" data-go="settings">Settings</button>
+          <button type="button" class="menu-item" data-go="credits">About</button>
+        </nav>
+      </div>
+      <div class="main-foot">
+        <span id="mainCinders"></span>
+        <span id="mainBest"></span>
+      </div>
+    </section>
+
+    <!-- Choose a lantern and a Dusk tier -->
+    <section id="scr-loadout" class="screen" hidden>
+      <div class="panel panel-wide">
+        <header class="panel-head"><h2>Choose your lantern</h2><button type="button" class="btn-back" data-go="main">Back</button></header>
+        <div id="lanternList" class="lantern-list" role="radiogroup" aria-label="Lantern"></div>
+        <div class="dusk">
+          <div class="dusk-head">
+            <button type="button" id="duskDown" class="step" aria-label="Easier">&minus;</button>
+            <div class="dusk-name" id="duskName"></div>
+            <button type="button" id="duskUp" class="step" aria-label="Harder">+</button>
+          </div>
+          <ul id="duskRules" class="dusk-rules"></ul>
+        </div>
+        <p id="loadoutNote" class="note"></p>
+        <div class="row-end"><button type="button" id="btnBegin" class="btn btn-primary" data-autofocus>Begin</button></div>
+      </div>
+    </section>
+
+    <!-- Meta progression shop -->
+    <section id="scr-hearth" class="screen" hidden>
+      <div class="panel panel-wide">
+        <header class="panel-head"><h2>The Hearth</h2><span id="hearthCinders" class="purse"></span><button type="button" class="btn-back" data-go="main" data-autofocus>Back</button></header>
+        <p class="lede">Cinders are what a run leaves behind. Spend them here to add lanterns and new cards to future runs. Nothing here makes you stronger on its own; it gives you more ways to play.</p>
+        <div id="hearthBody"></div>
+      </div>
+    </section>
+
+    <!-- How to play -->
+    <section id="scr-how" class="screen" hidden>
+      <div class="panel">
+        <header class="panel-head"><h2>How to play</h2><button type="button" class="btn-back" data-go="main" data-autofocus>Back</button></header>
+        <div class="how">
+          <p class="lede">You have no weapon but the dash. It cuts everything it passes through.</p>
+          <div class="controls">
+            <div><h3>Keyboard and mouse</h3>
+              <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or the arrow keys to move.</p>
+              <p>Aim with the mouse. <kbd>Click</kbd> or <kbd>Space</kbd> to dash.</p>
+              <p><kbd>Esc</kbd> or <kbd>P</kbd> to pause.</p>
+              <p>No mouse? <kbd>Space</kbd> dashes the way you are moving.</p>
+            </div>
+            <div><h3>Touch</h3>
+              <p>Left thumb: drag anywhere on the left to move.</p>
+              <p>Right thumb: drag to aim, let go to dash.</p>
+              <p>A quick tap on the right dashes at the nearest enemy.</p>
+            </div>
+          </div>
+          <h3>The rules of the flame</h3>
+          <ul class="rules">
+            <li>Every dash spends <b>Flame</b>. The ring around you shows how many dashes you have left.</li>
+            <li>Every kill pays Flame back. Cut two or more in one dash and you come out ahead.</li>
+            <li>While you dash, nothing can hurt you. Dash <em>through</em> danger, not away from it.</li>
+            <li>Warm light is yours. <span class="cold">Cold light</span> is about to hurt you.</li>
+            <li>After each wave, choose one card. After each boss, choose a relic.</li>
+            <li>Fifteen waves, a boss on every fifth. Then, if you like, the dark goes on forever.</li>
+          </ul>
+          <h3>What you have met</h3>
+          <div id="bestiary" class="bestiary"></div>
+          <h3>Build synergies</h3>
+          <div id="synergies" class="synergies-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="scr-stats" class="screen" hidden>
+      <div class="panel">
+        <header class="panel-head"><h2>Statistics</h2><button type="button" class="btn-back" data-go="main" data-autofocus>Back</button></header>
+        <div id="statsBody"></div>
+      </div>
+    </section>
+
+    <section id="scr-ach" class="screen" hidden>
+      <div class="panel">
+        <header class="panel-head"><h2>Achievements</h2><span id="achCount" class="purse"></span><button type="button" class="btn-back" data-go="main" data-autofocus>Back</button></header>
+        <div id="achBody" class="ach-list"></div>
+      </div>
+    </section>
+
+    <section id="scr-settings" class="screen" hidden>
+      <div class="panel panel-narrow">
+        <header class="panel-head"><h2>Settings</h2><button type="button" class="btn-back" id="settingsBack" data-autofocus>Back</button></header>
+        <div class="settings">
+          <label class="set-row"><span>Master volume</span><input type="range" id="setMaster" min="0" max="100" step="1"></label>
+          <label class="set-row"><span>Sound effects</span><input type="range" id="setSfx" min="0" max="100" step="1"></label>
+          <label class="set-row"><span>Music</span><input type="range" id="setMusic" min="0" max="100" step="1"></label>
+          <label class="set-row"><span>Mute all sound</span><input type="checkbox" id="setMute"></label>
+          <label class="set-row"><span>Screen shake</span><input type="range" id="setShake" min="0" max="100" step="5"></label>
+          <label class="set-row"><span>Reduce motion <small>No shake, slow motion or flashes</small></span><input type="checkbox" id="setReduced"></label>
+          <label class="set-row"><span>Aim guide <small>Shows where a dash will end</small></span><input type="checkbox" id="setAim"></label>
+          <label class="set-row"><span>Score numbers <small>Points pop up over kills</small></span><input type="checkbox" id="setNumbers"></label>
+          <div class="set-row"><span>Full screen</span><button type="button" id="setFullscreen" class="btn btn-small">Toggle</button></div>
+          <div class="set-row set-danger"><span>Erase all progress <small>Unlocks, Cinders, statistics and achievements</small></span><button type="button" id="setReset" class="btn btn-small btn-danger">Erase</button></div>
+          <p id="setNote" class="note"></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="scr-credits" class="screen" hidden>
+      <div class="panel panel-narrow">
+        <header class="panel-head"><h2>About</h2><button type="button" class="btn-back" data-go="main" data-autofocus>Back</button></header>
+        <div class="about">
+          <p>Cinderwake is a small game about one idea: your movement is your weapon.</p>
+          <p>Everything you see is drawn on a canvas as you play, and every sound is synthesised in your browser. There are no image, font or audio files, no libraries, no accounts, no adverts, no tracking and no network requests. It runs offline and costs nothing.</p>
+          <p>Your progress is kept in this browser's local storage and never leaves your device. You can erase it under Settings.</p>
+          <p class="fine">Design, code, art and sound: made with Claude. Released under the MIT licence.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- In-run overlays -->
+    <section id="scr-pause" class="screen screen-dim" hidden>
+      <div class="panel panel-narrow">
+        <header class="panel-head"><h2>Paused</h2></header>
+        <nav class="menu menu-tight">
+          <button type="button" class="menu-item menu-primary" data-act="resume" data-autofocus>Resume</button>
+          <button type="button" class="menu-item" data-act="restart">Restart run</button>
+          <button type="button" class="menu-item" data-act="settings-pause">Settings</button>
+          <button type="button" class="menu-item" data-act="quit">Save and quit to menu</button>
+        </nav>
+        <div id="pauseBuild" class="owned"></div>
+      </div>
+    </section>
+
+    <section id="scr-upgrade" class="screen screen-dim" hidden>
+      <div class="pick">
+        <h2 id="pickTitle"></h2>
+        <p id="pickSub" class="pick-sub"></p>
+        <div id="pickCards" class="cards"></div>
+        <div class="pick-foot">
+          <button type="button" id="btnReroll" class="btn btn-small"></button>
+          <div id="pickOwned" class="owned owned-inline"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="scr-victory" class="screen screen-dim" hidden>
+      <div class="panel panel-narrow center">
+        <h2 class="big">Dawn breaks</h2>
+        <p id="victoryText" class="lede"></p>
+        <div class="row-center">
+          <button type="button" class="btn btn-primary" data-act="endless" data-autofocus>Go on into the endless dark</button>
+          <button type="button" class="btn" data-act="bank">End the run here</button>
+        </div>
+        <p class="note">Endless keeps your build and your score climbing. Your Cinders are safe either way.</p>
+      </div>
+    </section>
+
+    <section id="scr-over" class="screen screen-dim" hidden>
+      <div class="panel over">
+        <h2 id="overTitle" class="big"></h2>
+        <p id="overWhy" class="over-why"></p>
+        <div class="over-score"><span id="overScore"></span><span id="overBest" class="tag"></span></div>
+        <dl id="overStats" class="over-stats"></dl>
+        <div class="over-cinders"><span id="overCinders"></span><span id="overCindersNote" class="dim"></span></div>
+        <div id="overAch" class="over-ach"></div>
+        <div id="overAnalysis" class="over-analysis"></div>
+        <div id="overGoal" class="goal"></div>
+        <div class="row-center">
+          <button type="button" class="btn btn-primary" data-act="again" data-autofocus>Play again</button>
+          <button type="button" class="btn" data-act="hearth">The Hearth</button>
+          <button type="button" class="btn" data-act="menu">Menu</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="toasts" aria-live="polite"></div>
+</div>
+<noscript><p style="color:#e9e0cc;padding:2rem;font-family:Georgia,serif">Cinderwake needs JavaScript to run.</p></noscript>
+
+<!-- Plain scripts, loaded in order, so the game also runs straight from the file system. -->
+<script src="js/utils.js"></script>
+<script src="js/data.js"></script>
+<script src="js/save.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/input.js"></script>
+<script src="js/fx.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/enemies.js"></script>
+<script src="js/bosses.js"></script>
+<script src="js/player.js"></script>
+<script src="js/waves.js"></script>
+<script src="js/game.js"></script>
+<script src="js/render.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
