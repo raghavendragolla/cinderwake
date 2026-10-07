@@ -1,4 +1,19 @@
-const ALLOWED_ORIGIN = "https://cinderwake.raghavendragolla.com";
+const ALLOWED_ORIGINS = new Set([
+  "https://cinderwake.raghavendragolla.com",
+  "http://127.0.0.1:5500",
+  "http://localhost:5500",
+]);
+
+function isAllowedOrigin(origin) {
+  return ALLOWED_ORIGINS.has(origin);
+}
+
+function getCorsOrigin(origin) {
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    return origin;
+  }
+  return "https://cinderwake.raghavendragolla.com";
+}
 
 const SESSION_COOKIE = "cinderwake_session";
 const SESSION_DAYS = 30;
@@ -6,10 +21,8 @@ const SESSION_DAYS = 30;
 const PASSWORD_ITERATIONS = 100000;
 
 function corsHeaders(origin) {
-  const allowed = origin === ALLOWED_ORIGIN;
-
   return {
-    "Access-Control-Allow-Origin": allowed ? ALLOWED_ORIGIN : ALLOWED_ORIGIN,
+    "Access-Control-Allow-Origin": getCorsOrigin(origin),
     "Access-Control-Allow-Credentials": "true",
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
@@ -17,7 +30,7 @@ function corsHeaders(origin) {
   };
 }
 
-function json(data, status = 200, origin = ALLOWED_ORIGIN, extra = {}) {
+function json(data, status = 200, origin = "", extra = {}) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
@@ -599,7 +612,7 @@ export default {
       });
     }
 
-    if (origin && origin !== ALLOWED_ORIGIN) {
+    if (origin && !isAllowedOrigin(origin)) {
       return json(
         {
           error: "Origin not allowed.",

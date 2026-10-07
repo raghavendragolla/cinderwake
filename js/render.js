@@ -1010,46 +1010,31 @@ const Render = {
     // aim guide: where this dash would end — the same length rule the
     // dash itself uses, so the guide can never promise a longer cut
     if (Save.data.settings.aimGuide && !p.dash && G.state === "play") {
-      const isDragging = (Input.held && (Input.mouseDash || Input.mouseActive() || (Input.touch && !Input.tap))) || p.charging;
       let d = S.dashDist;
-      if (L.charge) {
-        d = lerp(L.distMin, S.dashDist, p.charging ? p.charge : 0);
-      } else if (isDragging) {
-        if (L.blink) d = blinkLengthFor(p);
-        else d = dashLengthFor(p);
-      } else {
-        d = S.dashDist;
-      }
+      if (L.charge) d = lerp(L.distMin, S.dashDist, p.charging ? p.charge : 0);
+      else if (L.blink) d = blinkLengthFor(p);
+      else d = dashLengthFor(p);
       const ex = clamp(x + Math.cos(p.aim) * d, 14, G.W - 14), ey = clamp(y + Math.sin(p.aim) * d, 14, G.H - 14);
-      Input.mouseArena(_mousePt);
-      const dToHandle = dist(_mousePt.x, _mousePt.y, ex, ey);
-      const isHovered = Input.mouseActive() && !Input.touch && dToHandle < 26;
       if (this.canvas) {
-        this.canvas.style.cursor = isDragging ? "grabbing" : (isHovered ? "grab" : "crosshair");
+        this.canvas.style.cursor = "crosshair";
       }
       const guideColor = can ? PAL.goldRGB : "220,110,60";
-      const a = can ? (isDragging ? 0.72 : (isHovered ? 0.55 : 0.32)) : 0.22;
+      const a = can ? 0.35 : 0.15;
       ctx.strokeStyle = `rgba(${guideColor},${a})`;
-      ctx.lineWidth = L.blink ? (isDragging ? 2.0 : 1.2) : (isDragging ? 2.6 : (isHovered ? 2.0 : 1.5)) + (p.charging ? p.charge * 3 : 0);
-      ctx.setLineDash(isDragging ? [5, 5] : (isHovered ? [4, 6] : [3, 7]));
+      ctx.lineWidth = L.blink ? 1.2 : 1.6 + (p.charging ? p.charge * 3 : 0);
+      ctx.setLineDash([3, 7]);
       ctx.lineCap = "round";
       ctx.beginPath();
       ctx.moveTo(x + Math.cos(p.aim) * 30, y + Math.sin(p.aim) * 30);
       ctx.lineTo(ex, ey);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.strokeStyle = `rgba(${guideColor},${a + 0.25})`;
-      ctx.lineWidth = isDragging ? 2.4 : (isHovered ? 2.0 : 1.5);
-      const ringR = L.blink ? S.burstR : (isDragging ? 8.5 : (isHovered ? 8 : 6));
+      ctx.strokeStyle = `rgba(${guideColor},${a + 0.2})`;
+      ctx.lineWidth = 1.6;
+      const ringR = L.blink ? S.burstR : 6;
       ctx.beginPath();
       ctx.arc(ex, ey, ringR, 0, TAU);
       ctx.stroke();
-      if (isDragging || isHovered) {
-        ctx.fillStyle = `rgba(${guideColor},${isDragging ? 0.32 : 0.16})`;
-        ctx.beginPath();
-        ctx.arc(ex, ey, ringR, 0, TAU);
-        ctx.fill();
-      }
     }
 
     // warm light

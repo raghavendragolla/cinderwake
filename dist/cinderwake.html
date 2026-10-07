@@ -886,13 +886,22 @@ input[type="checkbox"]:checked::after { content: ""; position: absolute; inset: 
 
           <!-- Auth Forms (Login / Create Account) -->
           <div id="cloudAuthForm">
-            <div class="cloud-fields">
-              <label class="cloud-label"><span>Username</span><input type="text" id="cloudUsername" placeholder="username (3–32 chars)" autocomplete="username" maxlength="32"></label>
-              <label class="cloud-label"><span>Password</span><input type="password" id="cloudPassword" placeholder="at least 8 characters" autocomplete="current-password"></label>
+            <div id="cloudAuthFields">
+              <div class="cloud-fields">
+                <label class="cloud-label"><span>Username</span><input type="text" id="cloudUsername" placeholder="username (3–32 chars)" autocomplete="username" maxlength="32"></label>
+                <label class="cloud-label"><span>Password</span><input type="password" id="cloudPassword" placeholder="at least 8 characters" autocomplete="current-password"></label>
+              </div>
+              <div class="row-center">
+                <button type="button" id="btnCloudLogin" class="btn btn-primary">Login</button>
+                <button type="button" id="btnCloudRegister" class="btn">Create Account</button>
+              </div>
             </div>
-            <div class="row-center">
-              <button type="button" id="btnCloudLogin" class="btn btn-primary">Login</button>
-              <button type="button" id="btnCloudRegister" class="btn">Create Account</button>
+            <div id="cloudMigrationConfirm" class="panel panel-compact center" style="margin-top:10px; padding:12px; border:1px solid rgba(255,217,138,0.25); border-radius:6px; background:rgba(255,255,255,0.03);" hidden>
+              <p style="font-size:13px; line-height:1.4; margin:0 0 12px; color:var(--col-paper,#f0ebe1);">Existing guest progression found. Create this account and back up your current progression to the cloud?</p>
+              <div class="row-center" style="gap:8px;">
+                <button type="button" id="btnCloudConfirmBackup" class="btn btn-primary">Create & Back Up</button>
+                <button type="button" id="btnCloudCancelBackup" class="btn">Cancel</button>
+              </div>
             </div>
             <p id="cloudAuthNote" class="note"></p>
           </div>
@@ -2168,7 +2177,7 @@ const Cloud = {
     }
   },
 
-  async register(username, password) {
+  async register(username, password, shouldMigrate = false) {
     username = (username || "").trim();
     if (!/^[a-zA-Z0-9_]{3,32}$/.test(username)) {
       throw new Error("Username must be 3–32 characters (letters, numbers, underscore).");
@@ -2189,24 +2198,22 @@ const Cloud = {
       localStorage.setItem(CLOUD_CACHED_USER_KEY, username);
     }
 
-    // Register flow: check whether cloud already has a save
-    // If local has meaningful progress and cloud does not, migrate to cloud once.
-    try {
-      const cloudSave = await this.fetchCloudSave();
-      const localData = typeof Save !== "undefined" && Save.data;
-      const hasLocal = this.hasMeaningfulProgress(localData);
-      const hasCloud = this.hasMeaningfulProgress(cloudSave);
-
-      if (hasLocal && !hasCloud) {
-        await this.pushCloudSave(this.toCloudPayload(localData));
-      } else if (hasCloud) {
-        this.applyCloudPayload(cloudSave);
-      } else if (localData) {
-        await this.pushCloudSave(this.toCloudPayload(localData));
+    // Register flow:
+    // If migration requested and local save has progression: upload local persistent progression
+    const localData = typeof Save !== "undefined" && Save.data;
+    if (shouldMigrate && localData && this.hasMeaningfulProgress(localData)) {
+      const payload = this.toCloudPayload(localData);
+      await this.pushCloudSave(payload);
+      this.applyCloudPayload(payload);
+    } else {
+      try {
+        const cloudSave = await this.fetchCloudSave();
+        if (cloudSave) {
+          this.applyCloudPayload(cloudSave);
+        }
+      } catch (e) {
+        // Fallback: keep initial state
       }
-    } catch (e) {
-      // Offline fallback: mark sync pending
-      this.syncPending = true;
     }
 
     return { ok: true, user: this.user };
@@ -2294,22 +2301,64 @@ const Cloud = {
   toCloudPayload(local) {
     if (!local) return null;
     const s = local.stats || {};
+
+    // Extract Bestiary: enemy kills and boss defeats
+    const bestiaryList = [];
+    if (local.enemyKills && typeof local.enemyKills === "object") {
+      for (const k in local.enemyKills) {
+        if (local.enemyKills[k]) bestiaryList.push(k);
+      }
+    }
+    if (local.bossDefeats && typeof local.bossDefeats === "object") {
+      for (const k in local.bossDefeats) {
+        if (local.bossDefeats[k] && !bestiaryList.includes(k)) bestiaryList.push(k);
+      }
+    }
+    if (Array.isArray(local.bestiary)) {
+      for (const k of local.bestiary) {
+        if (typeof k === "string" && !bestiaryList.includes(k)) bestiaryList.push(k);
+      }
+    }
+
+    // Achievements: array of unlocked achievement IDs
+    const achList = [];
+    if (local.ach && typeof local.ach === "object") {
+      for (const k in local.ach) {
+        if (local.ach[k]) achList.push(k);
+      }
+    }
+    if (Array.isArray(local.achievements)) {
+      for (const k of local.achievements) {
+        if (typeof k === "string" && !achList.includes(k)) achList.push(k);
+      }
+    }
+
+    // Synergies: array of seen synergy IDs
+    const synList = [];
+    if (local.seenSynergy && typeof local.seenSynergy === "object") {
+      for (const k in local.seenSynergy) {
+        if (local.seenSynergy[k]) synList.push(k);
+      }
+    }
+    if (Array.isArray(local.synergies)) {
+      for (const k of local.synergies) {
+        if (typeof k === "string" && !synList.includes(k)) synList.push(k);
+      }
+    }
+
+    const life = (typeof s.lifetimeScore === "number") ? s.lifetimeScore : (typeof local.lifetimeScore === "number" ? local.lifetimeScore : 0);
+
     return {
-      lifetimeScore: s.lifetimeScore || 0,
-      cinders: local.cinders || 0,
-      selectedLantern: local.lantern || "wick",
-      unlockedLanterns: Array.isArray(local.lanterns) && local.lanterns.length ? local.lanterns : ["wick"],
-      lanternMastery: local.byLantern || {},
-      achievements: local.ach || {},
-      bestiary: {
-        kills: local.enemyKills || {},
-        bosses: local.bossDefeats || {},
-        seen: local.seen || {},
-        seenElite: local.seenElite || {},
-      },
-      synergies: local.seenSynergy || {},
-      duskProgress: local.duskMax || 0,
-      saveVersion: 1,
+      lifetimeScore: Math.max(0, Math.floor(life)),
+      cinders: Math.max(0, Math.floor(Number(local.cinders) || 0)),
+      selectedLantern: String(local.lantern || local.selectedLantern || "wick"),
+      unlockedLanterns: Array.isArray(local.lanterns) && local.lanterns.length ? [...new Set(local.lanterns)] : ["wick"],
+      lanternMastery: local.byLantern || local.lanternMastery || {},
+      achievements: achList,
+      bestiary: bestiaryList,
+      synergies: synList,
+      duskProgress: Math.max(0, Math.floor(Number(local.duskMax || local.duskProgress) || 0)),
+      saveVersion: Math.max(1, Math.floor(Number(local.v || local.saveVersion) || 1)),
     };
   },
 
@@ -2331,7 +2380,7 @@ const Cloud = {
 
     const unlocked = cloud.unlockedLanterns || cloud.unlocked_lanterns;
     if (Array.isArray(unlocked) && unlocked.length) {
-      d.lanterns = unlocked;
+      d.lanterns = [...new Set(unlocked.filter((id) => typeof id === "string" && id))];
     }
 
     const selected = cloud.selectedLantern || cloud.selected_lantern;
@@ -2346,12 +2395,20 @@ const Cloud = {
       d.byLantern = Object.assign({}, d.byLantern, mastery);
     }
 
-    if (cloud.achievements && typeof cloud.achievements === "object") {
+    if (Array.isArray(cloud.achievements)) {
+      for (const id of cloud.achievements) {
+        if (typeof id === "string") d.ach[id] = 1;
+      }
+    } else if (cloud.achievements && typeof cloud.achievements === "object") {
       d.ach = Object.assign({}, d.ach, cloud.achievements);
     }
 
     const syn = cloud.synergies || cloud.seen_synergy;
-    if (syn && typeof syn === "object") {
+    if (Array.isArray(syn)) {
+      for (const id of syn) {
+        if (typeof id === "string") d.seenSynergy[id] = 1;
+      }
+    } else if (syn && typeof syn === "object") {
       d.seenSynergy = Object.assign({}, d.seenSynergy, syn);
     }
 
@@ -2360,21 +2417,29 @@ const Cloud = {
       d.duskMax = Math.max(d.duskMax || 0, dusk);
     }
 
-    if (cloud.bestiary && typeof cloud.bestiary === "object") {
+    if (Array.isArray(cloud.bestiary)) {
+      for (const id of cloud.bestiary) {
+        if (typeof id === "string") {
+          if (typeof ENEMY_INFO === "object" && ENEMY_INFO[id] && ENEMY_INFO[id].boss) {
+            d.bossDefeats[id] = Math.max(d.bossDefeats[id] || 0, 1);
+          } else {
+            d.enemyKills[id] = Math.max(d.enemyKills[id] || 0, 1);
+          }
+          d.seen[id] = Math.max(d.seen[id] || 0, 1);
+        }
+      }
+    } else if (cloud.bestiary && typeof cloud.bestiary === "object") {
       if (cloud.bestiary.kills) d.enemyKills = Object.assign({}, d.enemyKills, cloud.bestiary.kills);
       if (cloud.bestiary.bosses) d.bossDefeats = Object.assign({}, d.bossDefeats, cloud.bestiary.bosses);
       if (cloud.bestiary.seen) d.seen = Object.assign({}, d.seen, cloud.bestiary.seen);
       if (cloud.bestiary.seenElite) d.seenElite = Object.assign({}, d.seenElite, cloud.bestiary.seenElite);
-      // Support flat bestiary dict of kill counts
-      for (const k in cloud.bestiary) {
-        if (typeof cloud.bestiary[k] === "number") {
-          d.enemyKills[k] = Math.max(d.enemyKills[k] || 0, cloud.bestiary[k]);
-        }
-      }
     }
 
     // Persist to local cache immediately
     Save._set(SAVE_KEY, JSON.stringify(Save.data));
+    if (typeof UI === "object" && UI.updateHearth) {
+      try { UI.updateHearth(); } catch (_) {}
+    }
   },
 
   hasMeaningfulProgress(data) {
@@ -2383,7 +2448,19 @@ const Cloud = {
     const cinders = data.cinders || 0;
     const lanterns = data.lanterns || data.unlockedLanterns || data.unlocked_lanterns || [];
     const runs = (data.stats && data.stats.runs) || 0;
-    return life > 0 || cinders > 0 || lanterns.length > 1 || runs > 0;
+    const ach = data.ach || data.achievements || {};
+    const achCount = Array.isArray(ach) ? ach.length : Object.keys(ach).length;
+    const bestiary = data.enemyKills || data.bossDefeats || (data.bestiary && data.bestiary.kills) || data.bestiary || {};
+    const killsCount = Array.isArray(bestiary) ? bestiary.length : Object.keys(bestiary).length;
+    const mastery = data.byLantern || data.lanternMastery || {};
+    let hasMastery = false;
+    for (const id in mastery) {
+      if (mastery[id] && (mastery[id].runs > 0 || mastery[id].kills > 0 || mastery[id].best > 0)) {
+        hasMastery = true;
+        break;
+      }
+    }
+    return life > 0 || cinders > 0 || lanterns.length > 1 || runs > 0 || achCount > 0 || killsCount > 0 || hasMastery;
   },
 
   /* -------------------------------------------------- Sync Management */
@@ -3152,7 +3229,7 @@ const Input = {
   },
 
   mouseActive() {
-    return !this.touch && this.now - this.mouseT < 4;
+    return !this.touch && (this.mouseDash || this.now - this.mouseT < 4);
   },
 
   /** Mouse position in arena units. */
@@ -8725,46 +8802,31 @@ const Render = {
     // aim guide: where this dash would end — the same length rule the
     // dash itself uses, so the guide can never promise a longer cut
     if (Save.data.settings.aimGuide && !p.dash && G.state === "play") {
-      const isDragging = (Input.held && (Input.mouseDash || Input.mouseActive() || (Input.touch && !Input.tap))) || p.charging;
       let d = S.dashDist;
-      if (L.charge) {
-        d = lerp(L.distMin, S.dashDist, p.charging ? p.charge : 0);
-      } else if (isDragging) {
-        if (L.blink) d = blinkLengthFor(p);
-        else d = dashLengthFor(p);
-      } else {
-        d = S.dashDist;
-      }
+      if (L.charge) d = lerp(L.distMin, S.dashDist, p.charging ? p.charge : 0);
+      else if (L.blink) d = blinkLengthFor(p);
+      else d = dashLengthFor(p);
       const ex = clamp(x + Math.cos(p.aim) * d, 14, G.W - 14), ey = clamp(y + Math.sin(p.aim) * d, 14, G.H - 14);
-      Input.mouseArena(_mousePt);
-      const dToHandle = dist(_mousePt.x, _mousePt.y, ex, ey);
-      const isHovered = Input.mouseActive() && !Input.touch && dToHandle < 26;
       if (this.canvas) {
-        this.canvas.style.cursor = isDragging ? "grabbing" : (isHovered ? "grab" : "crosshair");
+        this.canvas.style.cursor = "crosshair";
       }
       const guideColor = can ? PAL.goldRGB : "220,110,60";
-      const a = can ? (isDragging ? 0.72 : (isHovered ? 0.55 : 0.32)) : 0.22;
+      const a = can ? 0.35 : 0.15;
       ctx.strokeStyle = `rgba(${guideColor},${a})`;
-      ctx.lineWidth = L.blink ? (isDragging ? 2.0 : 1.2) : (isDragging ? 2.6 : (isHovered ? 2.0 : 1.5)) + (p.charging ? p.charge * 3 : 0);
-      ctx.setLineDash(isDragging ? [5, 5] : (isHovered ? [4, 6] : [3, 7]));
+      ctx.lineWidth = L.blink ? 1.2 : 1.6 + (p.charging ? p.charge * 3 : 0);
+      ctx.setLineDash([3, 7]);
       ctx.lineCap = "round";
       ctx.beginPath();
       ctx.moveTo(x + Math.cos(p.aim) * 30, y + Math.sin(p.aim) * 30);
       ctx.lineTo(ex, ey);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.strokeStyle = `rgba(${guideColor},${a + 0.25})`;
-      ctx.lineWidth = isDragging ? 2.4 : (isHovered ? 2.0 : 1.5);
-      const ringR = L.blink ? S.burstR : (isDragging ? 8.5 : (isHovered ? 8 : 6));
+      ctx.strokeStyle = `rgba(${guideColor},${a + 0.2})`;
+      ctx.lineWidth = 1.6;
+      const ringR = L.blink ? S.burstR : 6;
       ctx.beginPath();
       ctx.arc(ex, ey, ringR, 0, TAU);
       ctx.stroke();
-      if (isDragging || isHovered) {
-        ctx.fillStyle = `rgba(${guideColor},${isDragging ? 0.32 : 0.16})`;
-        ctx.beginPath();
-        ctx.arc(ex, ey, ringR, 0, TAU);
-        ctx.fill();
-      }
     }
 
     // warm light
@@ -9562,8 +9624,35 @@ const UI = {
     }
 
     const btnRegister = $("#btnCloudRegister");
+    const confirmBox = $("#cloudMigrationConfirm");
+    const authFields = $("#cloudAuthFields");
+    const btnConfirmBackup = $("#btnCloudConfirmBackup");
+    const btnCancelBackup = $("#btnCloudCancelBackup");
+
+    const doRegister = async (username, pwd, migrate) => {
+      if (btnRegister) btnRegister.disabled = true;
+      if (btnConfirmBackup) btnConfirmBackup.disabled = true;
+      if (note) note.textContent = "Creating account...";
+      try {
+        await Cloud.register(username, pwd, migrate);
+        const pwdEl = $("#cloudPassword");
+        if (pwdEl) pwdEl.value = "";
+        if (confirmBox) confirmBox.hidden = true;
+        if (authFields) authFields.hidden = false;
+        this.toast(migrate ? "Account created and local progression backed up." : ("Account created. Welcome, " + username));
+        this.buildCloud();
+      } catch (e) {
+        if (note) note.textContent = e.message || "Account creation failed.";
+        if (confirmBox) confirmBox.hidden = true;
+        if (authFields) authFields.hidden = false;
+      } finally {
+        if (btnRegister) btnRegister.disabled = false;
+        if (btnConfirmBackup) btnConfirmBackup.disabled = false;
+      }
+    };
+
     if (btnRegister) {
-      btnRegister.onclick = async () => {
+      btnRegister.onclick = () => {
         const username = ($("#cloudUsername").value || "").trim();
         const pwd = ($("#cloudPassword").value || "").trim();
         if (!username) { if (note) note.textContent = "Please enter a username."; return; }
@@ -9575,19 +9664,31 @@ const UI = {
           if (note) note.textContent = "Password must be at least 8 characters.";
           return;
         }
-        btnRegister.disabled = true;
-        if (note) note.textContent = "Creating account...";
-        try {
-          await Cloud.register(username, pwd);
-          const pwdEl = $("#cloudPassword");
-          if (pwdEl) pwdEl.value = "";
-          this.toast("Account created. Welcome, " + username);
-          this.buildCloud();
-        } catch (e) {
-          if (note) note.textContent = e.message || "Account creation failed.";
-        } finally {
-          btnRegister.disabled = false;
+        if (note) note.textContent = "";
+
+        const hasLocal = typeof Cloud !== "undefined" && Cloud.hasMeaningfulProgress(Save.data);
+        if (hasLocal && confirmBox && authFields) {
+          authFields.hidden = true;
+          confirmBox.hidden = false;
+        } else {
+          doRegister(username, pwd, false);
         }
+      };
+    }
+
+    if (btnConfirmBackup) {
+      btnConfirmBackup.onclick = () => {
+        const username = ($("#cloudUsername").value || "").trim();
+        const pwd = ($("#cloudPassword").value || "").trim();
+        doRegister(username, pwd, true);
+      };
+    }
+
+    if (btnCancelBackup) {
+      btnCancelBackup.onclick = () => {
+        if (confirmBox) confirmBox.hidden = true;
+        if (authFields) authFields.hidden = false;
+        if (note) note.textContent = "";
       };
     }
   },

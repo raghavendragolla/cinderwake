@@ -203,7 +203,7 @@ const Input = {
   },
 
   mouseActive() {
-    return !this.touch && this.now - this.mouseT < 4;
+    return !this.touch && (this.mouseDash || this.now - this.mouseT < 4);
   },
 
   /** Mouse position in arena units. */

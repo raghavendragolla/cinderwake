@@ -688,8 +688,35 @@ const UI = {
     }
 
     const btnRegister = $("#btnCloudRegister");
+    const confirmBox = $("#cloudMigrationConfirm");
+    const authFields = $("#cloudAuthFields");
+    const btnConfirmBackup = $("#btnCloudConfirmBackup");
+    const btnCancelBackup = $("#btnCloudCancelBackup");
+
+    const doRegister = async (username, pwd, migrate) => {
+      if (btnRegister) btnRegister.disabled = true;
+      if (btnConfirmBackup) btnConfirmBackup.disabled = true;
+      if (note) note.textContent = "Creating account...";
+      try {
+        await Cloud.register(username, pwd, migrate);
+        const pwdEl = $("#cloudPassword");
+        if (pwdEl) pwdEl.value = "";
+        if (confirmBox) confirmBox.hidden = true;
+        if (authFields) authFields.hidden = false;
+        this.toast(migrate ? "Account created and local progression backed up." : ("Account created. Welcome, " + username));
+        this.buildCloud();
+      } catch (e) {
+        if (note) note.textContent = e.message || "Account creation failed.";
+        if (confirmBox) confirmBox.hidden = true;
+        if (authFields) authFields.hidden = false;
+      } finally {
+        if (btnRegister) btnRegister.disabled = false;
+        if (btnConfirmBackup) btnConfirmBackup.disabled = false;
+      }
+    };
+
     if (btnRegister) {
-      btnRegister.onclick = async () => {
+      btnRegister.onclick = () => {
         const username = ($("#cloudUsername").value || "").trim();
         const pwd = ($("#cloudPassword").value || "").trim();
         if (!username) { if (note) note.textContent = "Please enter a username."; return; }
@@ -701,19 +728,31 @@ const UI = {
           if (note) note.textContent = "Password must be at least 8 characters.";
           return;
         }
-        btnRegister.disabled = true;
-        if (note) note.textContent = "Creating account...";
-        try {
-          await Cloud.register(username, pwd);
-          const pwdEl = $("#cloudPassword");
-          if (pwdEl) pwdEl.value = "";
-          this.toast("Account created. Welcome, " + username);
-          this.buildCloud();
-        } catch (e) {
-          if (note) note.textContent = e.message || "Account creation failed.";
-        } finally {
-          btnRegister.disabled = false;
+        if (note) note.textContent = "";
+
+        const hasLocal = typeof Cloud !== "undefined" && Cloud.hasMeaningfulProgress(Save.data);
+        if (hasLocal && confirmBox && authFields) {
+          authFields.hidden = true;
+          confirmBox.hidden = false;
+        } else {
+          doRegister(username, pwd, false);
         }
+      };
+    }
+
+    if (btnConfirmBackup) {
+      btnConfirmBackup.onclick = () => {
+        const username = ($("#cloudUsername").value || "").trim();
+        const pwd = ($("#cloudPassword").value || "").trim();
+        doRegister(username, pwd, true);
+      };
+    }
+
+    if (btnCancelBackup) {
+      btnCancelBackup.onclick = () => {
+        if (confirmBox) confirmBox.hidden = true;
+        if (authFields) authFields.hidden = false;
+        if (note) note.textContent = "";
       };
     }
   },

@@ -156,7 +156,7 @@ const Cloud = {
     }
   },
 
-  async register(username, password) {
+  async register(username, password, shouldMigrate = false) {
     username = (username || "").trim();
     if (!/^[a-zA-Z0-9_]{3,32}$/.test(username)) {
       throw new Error("Username must be 3–32 characters (letters, numbers, underscore).");
@@ -177,24 +177,22 @@ const Cloud = {
       localStorage.setItem(CLOUD_CACHED_USER_KEY, username);
     }
 
-    // Register flow: check whether cloud already has a save
-    // If local has meaningful progress and cloud does not, migrate to cloud once.
-    try {
-      const cloudSave = await this.fetchCloudSave();
-      const localData = typeof Save !== "undefined" && Save.data;
-      const hasLocal = this.hasMeaningfulProgress(localData);
-      const hasCloud = this.hasMeaningfulProgress(cloudSave);
-
-      if (hasLocal && !hasCloud) {
-        await this.pushCloudSave(this.toCloudPayload(localData));
-      } else if (hasCloud) {
-        this.applyCloudPayload(cloudSave);
-      } else if (localData) {
-        await this.pushCloudSave(this.toCloudPayload(localData));
+    // Register flow:
+    // If migration requested and local save has progression: upload local persistent progression
+    const localData = typeof Save !== "undefined" && Save.data;
+    if (shouldMigrate && localData && this.hasMeaningfulProgress(localData)) {
+      const payload = this.toCloudPayload(localData);
+      await this.pushCloudSave(payload);
+      this.applyCloudPayload(payload);
+    } else {
+      try {
+        const cloudSave = await this.fetchCloudSave();
+        if (cloudSave) {
+          this.applyCloudPayload(cloudSave);
+        }
+      } catch (e) {
+        // Fallback: keep initial state
       }
-    } catch (e) {
-      // Offline fallback: mark sync pending
-      this.syncPending = true;
     }
 
     return { ok: true, user: this.user };
@@ -282,22 +280,64 @@ const Cloud = {
   toCloudPayload(local) {
     if (!local) return null;
     const s = local.stats || {};
+
+    // Extract Bestiary: enemy kills and boss defeats
+    const bestiaryList = [];
+    if (local.enemyKills && typeof local.enemyKills === "object") {
+      for (const k in local.enemyKills) {
+        if (local.enemyKills[k]) bestiaryList.push(k);
+      }
+    }
+    if (local.bossDefeats && typeof local.bossDefeats === "object") {
+      for (const k in local.bossDefeats) {
+        if (local.bossDefeats[k] && !bestiaryList.includes(k)) bestiaryList.push(k);
+      }
+    }
+    if (Array.isArray(local.bestiary)) {
+      for (const k of local.bestiary) {
+        if (typeof k === "string" && !bestiaryList.includes(k)) bestiaryList.push(k);
+      }
+    }
+
+    // Achievements: array of unlocked achievement IDs
+    const achList = [];
+    if (local.ach && typeof local.ach === "object") {
+      for (const k in local.ach) {
+        if (local.ach[k]) achList.push(k);
+      }
+    }
+    if (Array.isArray(local.achievements)) {
+      for (const k of local.achievements) {
+        if (typeof k === "string" && !achList.includes(k)) achList.push(k);
+      }
+    }
+
+    // Synergies: array of seen synergy IDs
+    const synList = [];
+    if (local.seenSynergy && typeof local.seenSynergy === "object") {
+      for (const k in local.seenSynergy) {
+        if (local.seenSynergy[k]) synList.push(k);
+      }
+    }
+    if (Array.isArray(local.synergies)) {
+      for (const k of local.synergies) {
+        if (typeof k === "string" && !synList.includes(k)) synList.push(k);
+      }
+    }
+
+    const life = (typeof s.lifetimeScore === "number") ? s.lifetimeScore : (typeof local.lifetimeScore === "number" ? local.lifetimeScore : 0);
+
     return {
-      lifetimeScore: s.lifetimeScore || 0,
-      cinders: local.cinders || 0,
-      selectedLantern: local.lantern || "wick",
-      unlockedLanterns: Array.isArray(local.lanterns) && local.lanterns.length ? local.lanterns : ["wick"],
-      lanternMastery: local.byLantern || {},
-      achievements: local.ach || {},
-      bestiary: {
-        kills: local.enemyKills || {},
-        bosses: local.bossDefeats || {},
-        seen: local.seen || {},
-        seenElite: local.seenElite || {},
-      },
-      synergies: local.seenSynergy || {},
-      duskProgress: local.duskMax || 0,
-      saveVersion: 1,
+      lifetimeScore: Math.max(0, Math.floor(life)),
+      cinders: Math.max(0, Math.floor(Number(local.cinders) || 0)),
+      selectedLantern: String(local.lantern || local.selectedLantern || "wick"),
+      unlockedLanterns: Array.isArray(local.lanterns) && local.lanterns.length ? [...new Set(local.lanterns)] : ["wick"],
+      lanternMastery: local.byLantern || local.lanternMastery || {},
+      achievements: achList,
+      bestiary: bestiaryList,
+      synergies: synList,
+      duskProgress: Math.max(0, Math.floor(Number(local.duskMax || local.duskProgress) || 0)),
+      saveVersion: Math.max(1, Math.floor(Number(local.v || local.saveVersion) || 1)),
     };
   },
 
@@ -319,7 +359,7 @@ const Cloud = {
 
     const unlocked = cloud.unlockedLanterns || cloud.unlocked_lanterns;
     if (Array.isArray(unlocked) && unlocked.length) {
-      d.lanterns = unlocked;
+      d.lanterns = [...new Set(unlocked.filter((id) => typeof id === "string" && id))];
     }
 
     const selected = cloud.selectedLantern || cloud.selected_lantern;
@@ -334,12 +374,20 @@ const Cloud = {
       d.byLantern = Object.assign({}, d.byLantern, mastery);
     }
 
-    if (cloud.achievements && typeof cloud.achievements === "object") {
+    if (Array.isArray(cloud.achievements)) {
+      for (const id of cloud.achievements) {
+        if (typeof id === "string") d.ach[id] = 1;
+      }
+    } else if (cloud.achievements && typeof cloud.achievements === "object") {
       d.ach = Object.assign({}, d.ach, cloud.achievements);
     }
 
     const syn = cloud.synergies || cloud.seen_synergy;
-    if (syn && typeof syn === "object") {
+    if (Array.isArray(syn)) {
+      for (const id of syn) {
+        if (typeof id === "string") d.seenSynergy[id] = 1;
+      }
+    } else if (syn && typeof syn === "object") {
       d.seenSynergy = Object.assign({}, d.seenSynergy, syn);
     }
 
@@ -348,21 +396,29 @@ const Cloud = {
       d.duskMax = Math.max(d.duskMax || 0, dusk);
     }
 
-    if (cloud.bestiary && typeof cloud.bestiary === "object") {
+    if (Array.isArray(cloud.bestiary)) {
+      for (const id of cloud.bestiary) {
+        if (typeof id === "string") {
+          if (typeof ENEMY_INFO === "object" && ENEMY_INFO[id] && ENEMY_INFO[id].boss) {
+            d.bossDefeats[id] = Math.max(d.bossDefeats[id] || 0, 1);
+          } else {
+            d.enemyKills[id] = Math.max(d.enemyKills[id] || 0, 1);
+          }
+          d.seen[id] = Math.max(d.seen[id] || 0, 1);
+        }
+      }
+    } else if (cloud.bestiary && typeof cloud.bestiary === "object") {
       if (cloud.bestiary.kills) d.enemyKills = Object.assign({}, d.enemyKills, cloud.bestiary.kills);
       if (cloud.bestiary.bosses) d.bossDefeats = Object.assign({}, d.bossDefeats, cloud.bestiary.bosses);
       if (cloud.bestiary.seen) d.seen = Object.assign({}, d.seen, cloud.bestiary.seen);
       if (cloud.bestiary.seenElite) d.seenElite = Object.assign({}, d.seenElite, cloud.bestiary.seenElite);
-      // Support flat bestiary dict of kill counts
-      for (const k in cloud.bestiary) {
-        if (typeof cloud.bestiary[k] === "number") {
-          d.enemyKills[k] = Math.max(d.enemyKills[k] || 0, cloud.bestiary[k]);
-        }
-      }
     }
 
     // Persist to local cache immediately
     Save._set(SAVE_KEY, JSON.stringify(Save.data));
+    if (typeof UI === "object" && UI.updateHearth) {
+      try { UI.updateHearth(); } catch (_) {}
+    }
   },
 
   hasMeaningfulProgress(data) {
@@ -371,7 +427,19 @@ const Cloud = {
     const cinders = data.cinders || 0;
     const lanterns = data.lanterns || data.unlockedLanterns || data.unlocked_lanterns || [];
     const runs = (data.stats && data.stats.runs) || 0;
-    return life > 0 || cinders > 0 || lanterns.length > 1 || runs > 0;
+    const ach = data.ach || data.achievements || {};
+    const achCount = Array.isArray(ach) ? ach.length : Object.keys(ach).length;
+    const bestiary = data.enemyKills || data.bossDefeats || (data.bestiary && data.bestiary.kills) || data.bestiary || {};
+    const killsCount = Array.isArray(bestiary) ? bestiary.length : Object.keys(bestiary).length;
+    const mastery = data.byLantern || data.lanternMastery || {};
+    let hasMastery = false;
+    for (const id in mastery) {
+      if (mastery[id] && (mastery[id].runs > 0 || mastery[id].kills > 0 || mastery[id].best > 0)) {
+        hasMastery = true;
+        break;
+      }
+    }
+    return life > 0 || cinders > 0 || lanterns.length > 1 || runs > 0 || achCount > 0 || killsCount > 0 || hasMastery;
   },
 
   /* -------------------------------------------------- Sync Management */

@@ -13,7 +13,7 @@ def deploy():
     script_name = "cinderwake-save"
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/workers/scripts/{script_name}"
 
-    with open("worker_clean.js", "r", encoding="utf-8") as f:
+    with open("worker.js", "r", encoding="utf-8") as f:
         code = f.read()
 
     boundary = "----CloudflareWorkerBoundaryDeploy"

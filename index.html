@@ -199,13 +199,22 @@
 
           <!-- Auth Forms (Login / Create Account) -->
           <div id="cloudAuthForm">
-            <div class="cloud-fields">
-              <label class="cloud-label"><span>Username</span><input type="text" id="cloudUsername" placeholder="username (3–32 chars)" autocomplete="username" maxlength="32"></label>
-              <label class="cloud-label"><span>Password</span><input type="password" id="cloudPassword" placeholder="at least 8 characters" autocomplete="current-password"></label>
+            <div id="cloudAuthFields">
+              <div class="cloud-fields">
+                <label class="cloud-label"><span>Username</span><input type="text" id="cloudUsername" placeholder="username (3–32 chars)" autocomplete="username" maxlength="32"></label>
+                <label class="cloud-label"><span>Password</span><input type="password" id="cloudPassword" placeholder="at least 8 characters" autocomplete="current-password"></label>
+              </div>
+              <div class="row-center">
+                <button type="button" id="btnCloudLogin" class="btn btn-primary">Login</button>
+                <button type="button" id="btnCloudRegister" class="btn">Create Account</button>
+              </div>
             </div>
-            <div class="row-center">
-              <button type="button" id="btnCloudLogin" class="btn btn-primary">Login</button>
-              <button type="button" id="btnCloudRegister" class="btn">Create Account</button>
+            <div id="cloudMigrationConfirm" class="panel panel-compact center" style="margin-top:10px; padding:12px; border:1px solid rgba(255,217,138,0.25); border-radius:6px; background:rgba(255,255,255,0.03);" hidden>
+              <p style="font-size:13px; line-height:1.4; margin:0 0 12px; color:var(--col-paper,#f0ebe1);">Existing guest progression found. Create this account and back up your current progression to the cloud?</p>
+              <div class="row-center" style="gap:8px;">
+                <button type="button" id="btnCloudConfirmBackup" class="btn btn-primary">Create & Back Up</button>
+                <button type="button" id="btnCloudCancelBackup" class="btn">Cancel</button>
+              </div>
             </div>
             <p id="cloudAuthNote" class="note"></p>
           </div>
