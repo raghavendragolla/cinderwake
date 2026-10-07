@@ -1010,14 +1010,19 @@ const Render = {
     // aim guide: where this dash would end — the same length rule the
     // dash itself uses, so the guide can never promise a longer cut
     if (Save.data.settings.aimGuide && !p.dash && G.state === "play") {
+      const isDragging = (Input.held && (Input.mouseDash || Input.mouseActive() || (Input.touch && !Input.tap))) || p.charging;
       let d = S.dashDist;
-      if (L.charge) d = lerp(L.distMin, S.dashDist, p.charging ? p.charge : 0);
-      else if (L.blink) d = blinkLengthFor(p);
-      else d = dashLengthFor(p);
+      if (L.charge) {
+        d = lerp(L.distMin, S.dashDist, p.charging ? p.charge : 0);
+      } else if (isDragging) {
+        if (L.blink) d = blinkLengthFor(p);
+        else d = dashLengthFor(p);
+      } else {
+        d = S.dashDist;
+      }
       const ex = clamp(x + Math.cos(p.aim) * d, 14, G.W - 14), ey = clamp(y + Math.sin(p.aim) * d, 14, G.H - 14);
       Input.mouseArena(_mousePt);
       const dToHandle = dist(_mousePt.x, _mousePt.y, ex, ey);
-      const isDragging = (Input.held && (Input.mouseDash || Input.mouseActive())) || p.charging;
       const isHovered = Input.mouseActive() && !Input.touch && dToHandle < 26;
       if (this.canvas) {
         this.canvas.style.cursor = isDragging ? "grabbing" : (isHovered ? "grab" : "crosshair");

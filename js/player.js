@@ -231,12 +231,16 @@ function updatePlayer(dt) {
   }
 }
 
-/** How far a normal (non-charged, non-blink) dash travels from here:
+/** Dash distance rule:
     mouse cursor clamped between 40 and S.dashDist (lantern max reach);
-    keyboard / touch default to S.dashDist. */
+    keyboard / touch default to S.dashDist unless dragged. */
 function dashLengthFor(p) {
   const S = G.S;
-  if (Input.touch || !Input.mouseActive()) return S.dashDist;
+  if (Input.touch) {
+    if (Input.tap || p.aimAuto) return S.dashDist;
+    return clamp(S.dashDist * p.aimPow, 40, S.dashDist);
+  }
+  if (!Input.mouseActive()) return S.dashDist;
   return clamp(p.aimDist, 40, S.dashDist);
 }
 
