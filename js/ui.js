@@ -71,7 +71,7 @@ const UI = {
     this.cur = name;
     this.bannerT = 0;
     $("#banner").classList.remove("on");
-    const build = { main: "refreshMain", loadout: "buildLoadout", hearth: "buildHearth", how: "buildBestiary", stats: "buildStats", ach: "buildAch", settings: "syncSettings", pause: "buildPause" }[name];
+    const build = { main: "refreshMain", loadout: "buildLoadout", hearth: "buildHearth", how: "buildBestiary", stats: "buildStats", ach: "buildAch", settings: "syncSettings", pause: "buildPause", cloud: "buildCloud" }[name];
     if (build) this[build]();
     const scr = $("#scr-" + name);
     if (scr) {
@@ -136,22 +136,56 @@ const UI = {
       case "bank":
         endRun(true);
         break;
+      case "daily":
+        // fixed lantern and tier — everyone's "today's best" has to be the
+        // same challenge, not whatever loadout you happened to have selected
+        this.hide();
+        startRun("wick", 0, null, Rng.todaySeed());
+        break;
+      case "practice":
+        this.hide();
+        startPractice();
+        break;
+      case "same-seed": {
+        const s = G.summary || { lantern: Save.data.lantern, dusk: Save.data.duskSel, seed: "" };
+        this.hide();
+        startRun(s.lantern, s.dusk, null, s.seed);
+        break;
+      }
       case "again": {
         const s = G.summary || { lantern: Save.data.lantern, dusk: Save.data.duskSel };
         this.hide();
         startRun(s.lantern, s.dusk, null);
         break;
       }
+      case "retry-wave":
+        this.hide();
+        restartCheckpoint();
+        break;
+      case "end-run":
+        this.hide();
+        endRun(false);
+        break;
     }
   },
 
-  toast(msg, kind) {
+  notify(badge, title, kind) {
     const box = $("#toasts");
     if (!box) return;
-    while (box.children.length >= 4) box.firstChild.remove();
-    const t = h("div", { class: "toast" + (kind ? " t-" + kind : ""), text: msg });
+    while (box.children.length >= 2) box.firstChild.remove();
+    const t = h("div", { class: "toast" + (kind ? " t-" + kind : "") });
+    if (badge) t.append(h("div", { class: "t-badge", text: badge }));
+    t.append(h("div", { class: "t-title", text: title || "" }));
     box.append(t);
-    setTimeout(() => t.remove(), 3700);
+    setTimeout(() => { if (t.parentNode) t.remove(); }, 1100);
+  },
+
+  toast(msg, kind) {
+    if (typeof msg === "string" && msg.includes(" — ")) {
+      const parts = msg.split(" — ");
+      return this.notify(parts[0], parts[1].split(".")[0], kind);
+    }
+    return this.notify("", msg, kind);
   },
 
   banner(title, sub, dur, cls) {
@@ -175,6 +209,19 @@ const UI = {
     const n = this.affordable().length;
     $("#hearthNote").textContent = n ? (n === 1 ? "1 thing you can afford" : n + " things you can afford") : "";
     $("#achNote").textContent = Object.keys(d.ach).length + " of " + ACHIEVEMENTS.length;
+    const today = typeof Rng === "object" ? Rng.todaySeed() : "";
+    $("#dailyNote").textContent = d.daily && d.daily.date === today && d.daily.played > 0 ? "today's best " + fmt(d.daily.best) : "not played today";
+    const cn = $("#cloudNote");
+    if (cn && typeof Cloud === "object") {
+      cn.textContent = Cloud.mode === "account" ? (Cloud.status === "syncing" ? "Syncing..." : Cloud.status === "offline" ? "Offline" : "Connected") : "Guest";
+    }
+    // the reset after a death should feel like the start of the next attempt,
+    // not a blank slate — say what carried over
+    const w = $("#mainWelcome");
+    if (w) {
+      const lr = d.lastRun;
+      w.textContent = lr && !r ? "Last time you reached Wave " + lr.wave + " with " + LANTERNS[lr.lantern].name + (lr.cinders > 0 ? ", and kept " + fmt(lr.cinders) + " Cinders" : "") + ". Beat it." : "";
+    }
   },
 
   /** Everything still for sale, cheapest first. */
@@ -197,6 +244,7 @@ const UI = {
   buildLoadout() {
     const d = Save.data;
     if (!this.selLantern || !d.lanterns.includes(this.selLantern)) this.selLantern = d.lantern;
+    if (!d.lanterns.includes(this.selLantern)) this.selLantern = "wick";
     const list = $("#lanternList");
     list.textContent = "";
     for (const id of LANTERN_ORDER) {
@@ -236,21 +284,16 @@ const UI = {
         );
       }
 
+      const isChecked = owned && id === this.selLantern;
       const b = h("button", {
-        type: "button", class: "lantern" + (owned ? "" : " locked"), role: "radio",
-        "aria-checked": id === this.selLantern ? "true" : "false", "aria-disabled": owned ? null : "true",
-        onclick: () => {
-          if (!owned) {
-            Sfx.deny();
-            $("#loadoutNote").textContent = L.name + " is locked. " + foot + ".";
-            return;
-          }
-          Sfx.ui();
-          this.selLantern = id;
-          this.buildLoadout();
-          const again = $$("#lanternList .lantern")[LANTERN_ORDER.indexOf(id)];
-          if (again) again.focus();
-        },
+        type: "button",
+        class: "lantern" + (owned ? "" : " locked"),
+        role: "radio",
+        "aria-checked": isChecked ? "true" : "false",
+        "aria-disabled": owned ? "false" : "true",
+        tabindex: owned ? "0" : "-1",
+        title: owned ? L.name : L.name + " (" + foot + ")",
+        onclick: () => this.selectLantern(id),
       },
         h("b", null, L.name + (owned && masteryLevel(bl) >= 5 ? " • " + L.masteryTitle : "")),
         h("span", { class: "l-tag" }, L.tag),
@@ -272,6 +315,43 @@ const UI = {
     $("#duskUp").disabled = t >= d.duskMax;
     $("#loadoutNote").textContent = d.run ? "Beginning a new run banks the Cinders from your unfinished one." : "";
   },
+  selectLantern(id) {
+    const d = Save.data;
+    const owned = d.lanterns.includes(id);
+    const L = LANTERNS[id];
+    if (!L) return;
+    if (!owned) {
+      Sfx.deny();
+      const foot = L.price ? L.price + " Cinders at the Hearth" : "Clear all 15 waves to earn it";
+      $("#loadoutNote").textContent = L.name + " is locked. " + foot + ".";
+      return;
+    }
+    Sfx.ui();
+    this.selLantern = id;
+    d.lantern = id;
+    Save.persist();
+    $("#loadoutNote").textContent = "";
+    this.buildLoadout();
+    const idx = LANTERN_ORDER.indexOf(id);
+    const again = $$("#lanternList .lantern")[idx];
+    if (again) again.focus();
+  },
+  stepLantern(dir) {
+    const d = Save.data;
+    const curIdx = LANTERN_ORDER.indexOf(this.selLantern);
+    for (let step = 1; step <= LANTERN_ORDER.length; step++) {
+      const nextIdx = (curIdx + dir * step + LANTERN_ORDER.length * 10) % LANTERN_ORDER.length;
+      const nextId = LANTERN_ORDER[nextIdx];
+      if (d.lanterns.includes(nextId)) {
+        this.selectLantern(nextId);
+        return;
+      }
+    }
+  },
+  selectLanternIndex(idx) {
+    if (idx < 0 || idx >= LANTERN_ORDER.length) return;
+    this.selectLantern(LANTERN_ORDER[idx]);
+  },
   stepDusk(dir) {
     const d = Save.data;
     d.duskSel = clamp(d.duskSel + dir, 0, d.duskMax);
@@ -280,6 +360,7 @@ const UI = {
   },
   begin() {
     const d = Save.data;
+    if (!d.lanterns.includes(this.selLantern)) this.selLantern = "wick";
     d.lantern = this.selLantern;
     Save.persist();
     Sfx.pick();
@@ -386,10 +467,11 @@ const UI = {
     const d = Save.data, s = d.stats, body = $("#statsBody");
     body.textContent = "";
     const rows = [
-      ["Runs", fmt(s.runs)], ["Campaign clears", fmt(s.clears)], ["Best score", fmt(s.bestScore)], ["Farthest wave", fmt(s.bestWave)],
+      ["Runs", fmt(s.runs)], ["Campaign clears", fmt(s.clears)], ["Best score", fmt(s.bestScore)], ["Lifetime score", fmt(s.lifetimeScore || 0)], ["Farthest wave", fmt(s.bestWave)],
       ["Most kills in one dash", fmt(s.bestMulti)], ["Longest combo", fmt(s.bestCombo)], ["Enemies cut down", fmt(s.kills)],
       ["Bosses defeated", fmt(s.bossKills)], ["Dashes made", fmt(s.dashes)], ["Perfect dashes landed", fmt(s.perfectDashes || 0)],
-      ["Bolts sent back", fmt(s.reflects)],
+      ["Bolts sent back", fmt(s.reflects)], ["Best Endless wave", d.bestEndless > CAMPAIGN_WAVES ? fmt(d.bestEndless) : "—"],
+      ["Fastest campaign clear", d.fastestClear > 0 ? fmtTime(d.fastestClear) : "—"],
       ["Cinders earned, all time", fmt(d.totalCinders)], ["Deepest Dusk unlocked", DUSK_TIERS[d.duskMax].name], ["Time in the dark", fmtTime(s.playTime)],
     ];
     const dl = h("dl", { class: "stat-list" });
@@ -402,9 +484,22 @@ const UI = {
         const b = d.byLantern[id];
         const ml = masteryLevel(b);
         dl2.append(h("dt", null, LANTERNS[id].name + (ml ? " (Mastery " + ml + (ml >= 5 ? ": " + LANTERNS[id].masteryTitle : "") + ")" : "")),
-          h("dd", null, fmt(b.best) + ", wave " + b.wave + (b.clears ? ", " + b.clears + (b.clears === 1 ? " clear" : " clears") : "")));
+          h("dd", null, fmt(b.best) + ", wave " + b.wave + (b.bestMulti ? ", " + b.bestMulti + "-dash" : "") + (b.clears ? ", " + b.clears + (b.clears === 1 ? " clear" : " clears") : "")));
       }
       body.append(h("h3", null, "Best by lantern"), dl2);
+    }
+    const hist = d.history || [];
+    if (hist.length) {
+      body.append(h("h3", null, "Recent Runs"));
+      const t = h("div", { class: "history-list" });
+      for (const hr of hist) {
+        t.append(h("div", { class: "history-row" },
+          h("div", null, h("b", null, LANTERNS[hr.lantern] ? LANTERNS[hr.lantern].name : hr.lantern), h("span", { class: "dim" }, " • " + (hr.cleared ? "Cleared" : "Wave " + hr.wave))),
+          h("div", { class: "history-score" }, fmt(hr.score) + " pts"),
+          h("div", { class: "dim" }, hr.seed ? hr.seed : hr.date)
+        ));
+      }
+      body.append(t);
     }
     if (!s.runs) body.append(h("p", { class: "note" }, "Nothing here yet. Begin a run and this page will fill in."));
   },
@@ -502,6 +597,170 @@ const UI = {
     $("#setNote").textContent = Save.storageOk ? "" : "This browser is blocking storage, so progress will not survive closing the tab.";
   },
 
+  /* ----------------------------------------------------- cloud save */
+  buildCloud() {
+    if (typeof Cloud !== "object") return;
+    const isAuthed = Cloud.mode === "account" && Cloud.user;
+    const badge = $("#cloudBadge");
+    const userEl = $("#cloudUserDisplay");
+    const desc = $("#cloudStatusDesc");
+    const authedBox = $("#cloudAuthedControls");
+    const authForm = $("#cloudAuthForm");
+    const note = $("#cloudAuthNote");
+    const syncNote = $("#cloudSyncNote");
+
+    if (note) note.textContent = "";
+    if (syncNote) syncNote.textContent = Cloud.lastSyncTime ? "Last synced: " + new Date(Cloud.lastSyncTime).toLocaleTimeString() : "";
+
+    if (isAuthed) {
+      if (authedBox) authedBox.hidden = false;
+      if (authForm) authForm.hidden = true;
+      if (badge) {
+        badge.textContent = Cloud.status === "syncing" ? "Syncing" : Cloud.status === "offline" ? "Offline" : "Cloud Save: ON";
+        badge.className = "cloud-badge " + (Cloud.status === "syncing" ? "syncing" : Cloud.status === "offline" ? "offline" : "connected");
+      }
+      if (userEl) userEl.textContent = (Cloud.user && Cloud.user.username) || "Connected";
+      if (desc) desc.textContent = "Your progression follows you across devices. Sync is automatic.";
+    } else {
+      if (authedBox) authedBox.hidden = true;
+      if (authForm) authForm.hidden = false;
+      if (badge) {
+        badge.textContent = "Guest";
+        badge.className = "cloud-badge";
+      }
+      if (userEl) userEl.textContent = "Local save only";
+      if (desc) desc.textContent = "Sign in or create an account to back up and sync your progression.";
+    }
+
+    const btnSync = $("#btnCloudSync");
+    if (btnSync) {
+      btnSync.onclick = async () => {
+        btnSync.disabled = true;
+        btnSync.textContent = "Syncing...";
+        try {
+          await Cloud.sync();
+          this.toast("Cloud save synced.");
+        } catch (e) {
+          this.toast("Sync failed: " + (e.message || "Network error"));
+        } finally {
+          btnSync.disabled = false;
+          btnSync.textContent = "Sync Now";
+          this.buildCloud();
+        }
+      };
+    }
+
+    const btnLogout = $("#btnCloudLogout");
+    if (btnLogout) {
+      btnLogout.onclick = async () => {
+        btnLogout.disabled = true;
+        try {
+          await Cloud.logout();
+        } finally {
+          btnLogout.disabled = false;
+          this.toast("Logged out. Returned to Guest mode.");
+          this.buildCloud();
+        }
+      };
+    }
+
+    const btnLogin = $("#btnCloudLogin");
+    if (btnLogin) {
+      btnLogin.onclick = async () => {
+        const username = ($("#cloudUsername").value || "").trim();
+        const pwd = ($("#cloudPassword").value || "").trim();
+        if (!username) { if (note) note.textContent = "Please enter your username."; return; }
+        if (!pwd) { if (note) note.textContent = "Please enter your password."; return; }
+        btnLogin.disabled = true;
+        if (note) note.textContent = "Signing in...";
+        try {
+          await Cloud.login(username, pwd);
+          const pwdEl = $("#cloudPassword");
+          if (pwdEl) pwdEl.value = "";
+          this.toast("Signed in as " + username);
+          this.buildCloud();
+        } catch (e) {
+          if (note) note.textContent = e.message || "Sign in failed.";
+        } finally {
+          btnLogin.disabled = false;
+        }
+      };
+    }
+
+    const btnRegister = $("#btnCloudRegister");
+    if (btnRegister) {
+      btnRegister.onclick = async () => {
+        const username = ($("#cloudUsername").value || "").trim();
+        const pwd = ($("#cloudPassword").value || "").trim();
+        if (!username) { if (note) note.textContent = "Please enter a username."; return; }
+        if (!/^[a-zA-Z0-9_]{3,32}$/.test(username)) {
+          if (note) note.textContent = "Username must be 3–32 characters (letters, numbers, underscore).";
+          return;
+        }
+        if (!pwd || pwd.length < 8) {
+          if (note) note.textContent = "Password must be at least 8 characters.";
+          return;
+        }
+        btnRegister.disabled = true;
+        if (note) note.textContent = "Creating account...";
+        try {
+          await Cloud.register(username, pwd);
+          const pwdEl = $("#cloudPassword");
+          if (pwdEl) pwdEl.value = "";
+          this.toast("Account created. Welcome, " + username);
+          this.buildCloud();
+        } catch (e) {
+          if (note) note.textContent = e.message || "Account creation failed.";
+        } finally {
+          btnRegister.disabled = false;
+        }
+      };
+    }
+  },
+
+  showConflictModal(localData, cloudData, callback) {
+    const box = $("#conflictComparison");
+    if (!box) { callback("merge"); return; }
+    box.innerHTML = `
+      <div class="conflict-card">
+        <h4>Local Browser Save</h4>
+        <dl>
+          <dt>Cinders</dt><dd>${fmt(localData.cinders || 0)}</dd>
+          <dt>Lifetime Score</dt><dd>${fmt((localData.stats && localData.stats.lifetimeScore) || 0)}</dd>
+          <dt>Lanterns</dt><dd>${(localData.lanterns || []).length}</dd>
+          <dt>Runs</dt><dd>${(localData.stats && localData.stats.runs) || 0}</dd>
+        </dl>
+      </div>
+      <div class="conflict-card">
+        <h4>Cloud Account Save</h4>
+        <dl>
+          <dt>Cinders</dt><dd>${fmt(cloudData.cinders || 0)}</dd>
+          <dt>Lifetime Score</dt><dd>${fmt(cloudData.lifetime_score || (cloudData.stats && cloudData.stats.lifetimeScore) || 0)}</dd>
+          <dt>Lanterns</dt><dd>${(cloudData.unlocked_lanterns || []).length}</dd>
+          <dt>Runs</dt><dd>${(cloudData.stats && cloudData.stats.runs) || 0}</dd>
+        </dl>
+      </div>
+    `;
+
+    $("#btnConflictLocal").onclick = () => {
+      this.hide();
+      this.show("cloud");
+      callback("local");
+    };
+    $("#btnConflictCloud").onclick = () => {
+      this.hide();
+      this.show("cloud");
+      callback("cloud");
+    };
+    $("#btnConflictMerge").onclick = () => {
+      this.hide();
+      this.show("cloud");
+      callback("merge");
+    };
+
+    this.show("conflict");
+  },
+
   /* ----------------------------------------------- in-run overlays */
   ownedInto(el, up) {
     el.textContent = "";
@@ -528,12 +787,29 @@ const UI = {
       else if (u.relic) level = "Relic";
       else if (u.consumable) level = "Used at once";
       else if (u.max > 1) level = "Level " + lvl + " of " + u.max;
+      let synEl = null;
+      if (u.build !== "util" && !u.relic) {
+        const possible = SYNERGIES.filter(s => s.need.includes(u.build));
+        const liveSyns = activeSynergies(run);
+        const myBuilds = activeBuilds(run);
+        const ready = possible.find(s => {
+          const other = s.need[0] === u.build ? s.need[1] : s.need[0];
+          return myBuilds[other] && !liveSyns.includes(s.id);
+        });
+        if (ready) {
+          synEl = h("span", { class: "card-synergy-ready" }, "⚡ Unlocks: " + ready.name);
+        } else if (possible.length) {
+          const partners = possible.map(s => BUILD_NAMES[s.need[0] === u.build ? s.need[1] : s.need[0]]).join(" • ");
+          synEl = h("span", { class: "card-synergy-pairs" }, "Pairs with: " + partners);
+        }
+      }
       box.append(h("button", { type: "button", class: "card" + (u.relic ? " relic" : "") + (u.cursed ? " cursed" : ""), onclick: () => this.pickCard(i) },
         h("span", { class: "card-icon", html: icon(u.build, 34) }),
         h("span", { class: "card-build" }, BUILD_NAMES[u.build]),
         h("span", { class: "card-name" }, u.name),
         h("span", { class: "card-level" }, level),
         h("span", { class: "card-desc" }, cardDesc(u, lvl, run.lantern)),
+        synEl,
         h("span", { class: "card-key" }, "Press " + (i + 1))));
     });
     const rb = $("#btnReroll");
@@ -558,6 +834,27 @@ const UI = {
     } else Sfx.deny();
   },
 
+  showCheckpoint(info) {
+    $("#cpTitle").textContent = "Wave " + info.wave + (info.waveName ? " — " + info.waveName : "");
+    $("#cpWhy").textContent = info.why || "The flame was extinguished.";
+    const st = $("#cpStats");
+    st.textContent = "";
+    [
+      ["Wave", info.wave],
+      ["Flame at fall", info.flame],
+      ["Kills this run", fmt(info.kills)],
+      ["Perfect dashes", fmt(info.perfectDashes)],
+      ["Best dash quality", info.bestQuality],
+      ["Rekindle used", info.rekindled ? "Yes" : "No"],
+    ].forEach((r) => st.append(h("div", null, h("dt", null, r[0]), h("dd", null, r[1]))));
+
+    const rb = $("#btnRetryWave");
+    if (rb) {
+      rb.textContent = "Retry Wave " + info.wave;
+    }
+    this.show("checkpoint");
+  },
+
   showVictory() {
     const run = G.run;
     $("#victoryText").textContent = "You carried the flame through all fifteen waves on " + DUSK_TIERS[run.dusk].name + ". Score so far: " + fmt(run.score) + ".";
@@ -566,11 +863,10 @@ const UI = {
 
   showOver(s) {
     const d = Save.data;
-    $("#overTitle").textContent = s.banked ? "The run is banked" : "The light goes out";
+    $("#overTitle").textContent = s.banked ? "The run is banked" : "Your flame fades";
     let why = "";
     if (!s.banked) {
-      const info = ENEMY_INFO[s.killedBy];
-      why = "Put out by " + killerName(s.killedBy) + " on wave " + s.wave + ". " + (s.near ? s.near + " " : "") + (info && info.tip ? info.tip : "");
+      why = s.deathCause + (s.near ? " " + s.near : "");
     } else why = "Fifteen waves cleared with " + LANTERNS[s.lantern].name + " on " + DUSK_TIERS[s.dusk].name + ".";
     $("#overWhy").textContent = why;
     $("#overScore").textContent = fmt(s.score);
@@ -579,8 +875,11 @@ const UI = {
     st.textContent = "";
     const effPct = s.flameSpent > 0 ? Math.round((s.flameGained / s.flameSpent) * 100) : 0;
     [
-      ["Wave", s.wave], ["Kills", fmt(s.kills)], ["Most in one dash", s.bestMulti], ["Best combo", s.bestCombo], ["Time", fmtTime(s.time)],
+      ["Wave", s.wave], ["Kills", fmt(s.kills)], ["Damage taken", fmt(s.hits || 0)], ["Most in one dash", s.bestMulti], ["Best combo", s.bestCombo], ["Time", fmtTime(s.time)],
       ["Perfect dashes", fmt(s.perfectDashes || 0)],
+      ["Rekindle used", s.rekindled ? "yes" : "no"],
+      ["Near misses", fmt(s.nearMisses || 0)],
+      ["Seed", s.seed || "—"],
       ["Kills per dash", s.dashes ? (s.kills / s.dashes).toFixed(2) : "0"],
       ["Flame efficiency", effPct + "%"],
     ].forEach((r) => st.append(h("div", null, h("dt", null, r[0]), h("dd", null, r[1]))));
@@ -604,6 +903,19 @@ const UI = {
     const ae = $("#overAch");
     ae.textContent = "";
     for (const id of s.newAch) if (ACH[id]) ae.append(h("span", null, "Achievement: " + ACH[id].name));
+
+    // what survives the run ending: this is the part that was never at risk
+    const perm = $("#overPermanent");
+    perm.textContent = "";
+    if (!s.banked) {
+      const bits = [];
+      if (s.masteryUp) {
+        const L = MASTERY_LEVELS.find((m) => m.id === s.masteryUp);
+        bits.push(h("p", null, LANTERNS[s.lantern].name + " reached ", h("b", null, L.name + (s.masteryUp >= 5 ? ": " + LANTERNS[s.lantern].masteryTitle : "")), "."));
+      }
+      for (const dd of s.newDisc || []) bits.push(h("p", null, "Discovered: ", h("b", null, dd.replace(/^\w+:\s*/, ""))));
+      if (bits.length) perm.append(h("h3", null, "What you keep"), ...bits);
+    }
 
     // run analysis: the dash tiers landed, the run's best stroke, and a
     // concrete, reachable target for the next attempt
@@ -675,9 +987,10 @@ const UI = {
       $("#hudHearts").innerHTML = html;
       $("#hudHearts").setAttribute("aria-label", p.hearts + " of " + S.maxHearts + " hearts");
     });
-    set("ticks", S.dashCost + "/" + S.maxFlame, () => {
+    const hideTicks = !!(w && w.mod && w.mod.hideFlameTicks);
+    set("ticks", hideTicks + "|" + S.dashCost + "/" + S.maxFlame, () => {
       let html = "";
-      for (let v = S.dashCost; v < S.maxFlame - 0.5; v += S.dashCost) html += `<i style="left:${(v / S.maxFlame) * 100}%"></i>`;
+      if (!hideTicks) for (let v = S.dashCost; v < S.maxFlame - 0.5; v += S.dashCost) html += `<i style="left:${(v / S.maxFlame) * 100}%"></i>`;
       $("#hudFlameTicks").innerHTML = html;
       $(".flame").style.width = "";
     });
@@ -698,6 +1011,10 @@ const UI = {
         if (w.n <= CAMPAIGN_WAVES && !run.endless) el.append(h("small", null, "of " + CAMPAIGN_WAVES));
       });
       set("left", w.boss || w.cleared || w.intro > 0 ? "" : w.left + " left", (v) => { $("#hudLeft").textContent = v; });
+      set("mutation", w.mod && w.mod.mutation && !w.cleared ? w.mod.name : "", (v) => {
+        const el = $("#hudMutation");
+        if (el) { el.hidden = !v; el.textContent = v; }
+      });
       const b = w.boss && w.bossRef && !w.bossRef.dead ? w.bossRef : null;
       set("boss", b ? ENEMY_INFO[w.boss].name : "", (v) => {
         $("#hudBoss").hidden = !v;
@@ -705,7 +1022,10 @@ const UI = {
       });
       if (b) set("bossHp", Math.round(clamp(b.hp / b.maxHp, 0, 1) * 200), (v) => { $("#hudBossFill").style.width = v / 2 + "%"; });
     }
-    set("score", run.score, (v) => { $("#hudScore").textContent = fmt(v); });
+    const lifetime = (Save.data && Save.data.stats && typeof Save.data.stats.lifetimeScore === "number")
+      ? Save.data.stats.lifetimeScore
+      : run.score;
+    set("score", lifetime, (v) => { $("#hudScore").textContent = fmt(v); });
     set("combo", G.combo >= 2 ? G.combo : 0, (v) => {
       $("#hudCombo").classList.toggle("on", v > 0);
       if (v) $("#hudComboN").textContent = v + " combo";

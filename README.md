@@ -106,8 +106,15 @@ wave runs long), Blood Moon (kills refund half Flame, but every third kill is
 free), Echo Chamber (every dash echoes once, built for it or not), Last Light
 (a shorter light radius, and no auto-aim to lean on).
 
-**A run.** Fifteen waves with a boss on every fifth. After the Eclipse you can
-bank the run or continue into endless waves, which keep speeding up.
+**A run.** Fifteen waves with a boss on every fifth. Several early and mid
+waves (3, 4, 6, 7, 8, 9) pick from two or three encounter variants at the same
+difficulty, so a run stays readable but not identical every time — some of
+those variants are the named pairs (Bulwark+Blister, Bulwark+Seer, Clot+Seer,
+Husk+Blister, Twin+Dart) that ask which enemy to cut first. After the Eclipse
+you can bank the run or continue into endless waves, which keep speeding up.
+Rarely, a wave also carries a **Cinder Shrine**: two small motes appear, each
+labelled with what it grants (a full refill of Flame, or 15 Cinders on the
+spot) before you choose — dash into one, or leave both and lose nothing.
 
 ## Progression
 
@@ -128,16 +135,35 @@ bank the run or continue into endless waves, which keep speeding up.
   charge a long, double-damage dash), Glint (blinks and bursts instead of
   cutting a path), Ashen (two hearts, double damage; earned by clearing the
   campaign).
+- **Lantern mastery.** Each lantern tracks its own five-level ladder (a run,
+  100 kills, 10 Perfect dashes, wave 10, a campaign clear), shown right on its
+  card when you pick a lantern. Level 3 quietly adds one thematic card to
+  every run with that lantern from then on (a new option, not a stat bump);
+  level 5 marks it mastered with a title and a tinted dash trail. A save from
+  before mastery existed starts counted fairly — a lantern you'd already
+  cleared the campaign with reads as mastered immediately.
+- **Discoveries.** The first time ever you meet an elite modifier or complete
+  a synergy, a distinct toast names it and it's logged for good — visible
+  afterwards in the Bestiary (now showing kills/defeats per enemy and boss)
+  and the new build-synergies grid under "How to play".
 - **Dusk tiers.** Clearing the campaign unlocks the next of five harder tiers,
   each adding a rule and 20% more Cinders.
 - **Achievements.** Twenty-seven, each paying Cinders once — including a run
   of skill-based ones: your first Perfect dash, 10 and 50 of them, a
   Masterful dash, clearing the campaign in under 12 minutes, and clearing it
   on 3 cards or fewer.
-- **Run analysis.** The run-over screen now reads the run back to you: dash
-  tiers landed, Perfect dashes, kills per dash, Flame efficiency, any
-  synergies in play, your best single moment, and one concrete, reachable
-  goal for the next attempt.
+- **When the flame fades.** Death isn't just "game over." The run-over screen
+  names *why* the run ended — but only from things actually tracked at that
+  moment (ran out of Flame with no dash left, was already down to your last
+  heart, got caught before finding your footing in a new wave, or simply what
+  hit you), never a guess — then reads the run back: dash tiers landed,
+  Perfect dashes, damage taken, Flame efficiency, any synergies in play. A
+  separate "What you keep" block then shows anything permanent the run
+  earned — a mastery level, a new discovery — before your best single moment
+  and one concrete, reachable goal for the next attempt.
+- **Welcome back.** The main menu remembers your last run ("Last time you
+  reached Wave 8 with Flicker, and kept 142 Cinders. Beat it.") so the reset
+  reads as a callback, not a blank slate.
 - **Continue.** A run is saved at the start of every wave. Quitting to the menu
   keeps it; starting a new run instead banks its Cinders.
 
@@ -152,6 +178,10 @@ js/save.js          localStorage save with validation and recovery
 js/audio.js         Web Audio synth: sound effects and generative music
 js/input.js         keyboard, mouse and touch
 js/fx.js            particles, streaks, stains, camera feedback
+js/ai.js            tactical layer: attack-token throttling, an escape-space
+                     fairness check, flank/support positioning, adaptive boss
+                     attack selection — enemies.js/waves.js/bosses.js degrade
+                     gracefully to their own simpler logic if this isn't loaded
 js/enemies.js       enemy behaviours
 js/bosses.js        the three bosses
 js/player.js        stats, movement, dash, blink, taking damage
@@ -192,12 +222,17 @@ several skill levels, with every frame checked for invalid numbers.
 - Progress lives in this browser's local storage only. Clearing site data or
   switching browser loses it.
 - Perfect-dash detection covers bolts, expanding shockwave rings, sweeping
-  beams and a boss mid-lunge — not Husk's instant ground slam, which has no
-  travelling hazard to time against.
-- "Last Light" only removes the auto-aim-at-nearest-enemy assist, which
-  mainly matters on touch; mouse and keyboard play were already manually
-  aimed, so the mutation reads weaker there.
-- No deterministic seeds, daily challenge, practice arena, or lantern-mastery
-  cosmetic tracks yet — all deliberately out of scope for this pass so the
-  systems that shipped could be built and tested properly instead of
-  everything arriving half-finished.
+  beams, a boss mid-lunge, a Dart's lunge and the Twins' thread — not Husk's
+  instant ground slam, which has no travelling hazard to time against.
+- "Last Light" also hides the Flame ring's dash-count tick marks (so you
+  judge Flame by the bar's fill, not an exact count) on top of removing the
+  auto-aim assist and dimming the light — the auto-aim half still matters
+  more on touch than on mouse/keyboard, which were already manually aimed.
+- The Cinder Shrine has one pair of effects (full Flame vs. 15 Cinders); more
+  shrine types, between-wave events beyond it, deterministic seeds, a daily
+  challenge, challenge-start modes and a practice arena are all still out of
+  scope, named rather than silently dropped.
+- `js/ai.js` and the `tools/*wave2*`/`tools/ml_experiment.py`/`tools/verify_all.py`
+  scripts came from work outside this pass; this document doesn't vouch for
+  what they do beyond what's described for `js/ai.js` above, which was read
+  and confirmed not to conflict with anything here.

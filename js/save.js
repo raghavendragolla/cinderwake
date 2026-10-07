@@ -32,14 +32,17 @@ function defaultSave() {
     enemyKills: {},
     bossDefeats: {},
     lastRun: null,
+    daily: { date: "", best: 0, played: 0 },
     bestEndless: 0,
     fastestClear: 0,
     tutorialDone: false,
     stats: {
       runs: 0, kills: 0, dashes: 0, bestScore: 0, bestWave: 0, bestCombo: 0, bestMulti: 0,
       playTime: 0, clears: 0, bossKills: 0, bulwarkKills: 0, reflects: 0, perfectDashes: 0,
+      lifetimeScore: 0,
     },
     byLantern,
+    history: [],
     settings: {
       master: 0.8, sfx: 0.9, music: 0.5, mute: false,
       shake: 1, reduced: null, aimGuide: true, numbers: true,
@@ -70,7 +73,9 @@ function sanitizeRun(r) {
   return {
     lantern: r.lantern,
     dusk: _int(r.dusk, 0, 0, DUSK_TIERS.length - 1),
+    seed: typeof r.seed === "string" ? r.seed : "",
     wave,
+    checkpointWave: _int(r.checkpointWave, wave, 1, 9999),
     up,
     score: _int(r.score, 0),
     kills: _int(r.kills, 0),
@@ -84,6 +89,7 @@ function sanitizeRun(r) {
     flawless: _int(r.flawless, 0),
     stormCount: _int(r.stormCount, 0),
     phoenixUsed: !!r.phoenixUsed,
+    rekindled: !!r.rekindled,
     endless: !!r.endless,
     cleared: !!r.cleared,
     hits: _int(r.hits, 0),
@@ -135,11 +141,18 @@ function sanitizeSave(raw) {
   if (raw.lastRun && typeof raw.lastRun === "object" && LANTERNS[raw.lastRun.lantern]) {
     d.lastRun = { wave: _int(raw.lastRun.wave, 1, 1, 9999), lantern: raw.lastRun.lantern, cleared: !!raw.lastRun.cleared, cinders: _int(raw.lastRun.cinders, 0) };
   }
+  if (raw.daily && typeof raw.daily === "object") {
+    d.daily = { date: typeof raw.daily.date === "string" ? raw.daily.date : "", best: _int(raw.daily.best, 0), played: _int(raw.daily.played, 0, 0, 9999) };
+  }
   d.bestEndless = _int(raw.bestEndless, 0, 0, 9999);
   d.fastestClear = _num(raw.fastestClear, 0);
   if (raw.stats && typeof raw.stats === "object") {
     for (const k in d.stats) d.stats[k] = _num(raw.stats[k], 0);
   }
+  if (typeof raw.lifetimeScore === "number" && !d.stats.lifetimeScore) {
+    d.stats.lifetimeScore = _int(raw.lifetimeScore, 0);
+  }
+  d.lifetimeScore = d.stats.lifetimeScore;
   d.byLantern = {};
   for (const id in LANTERNS) {
     const b = (raw.byLantern && typeof raw.byLantern === "object" && raw.byLantern[id]) || {};
@@ -160,6 +173,18 @@ function sanitizeSave(raw) {
     d.settings.aimGuide = s.aimGuide !== false;
     d.settings.numbers = s.numbers !== false;
   }
+  d.history = Array.isArray(raw.history)
+    ? raw.history.slice(0, 10).map((h) => ({
+        date: String(h.date || ""),
+        lantern: String(h.lantern || "wick"),
+        wave: _int(h.wave, 1),
+        score: _int(h.score, 0),
+        kills: _int(h.kills, 0),
+        seed: String(h.seed || ""),
+        cleared: !!h.cleared,
+        killedBy: String(h.killedBy || ""),
+      }))
+    : [];
   d.run = sanitizeRun(raw.run);
   return d;
 }
@@ -208,6 +233,9 @@ const Save = {
       this._set(SAVE_KEY, JSON.stringify(this.data));
     } catch (e) {
       this.storageOk = false;
+    }
+    if (typeof Cloud === "object" && Cloud.queueSync) {
+      Cloud.queueSync();
     }
   },
 

@@ -291,7 +291,7 @@ const BOSS_AI = {
         steer(b, 0, 0, dt, 6);
         b.t -= dt * k;
         if (b.t <= 0) {
-          if (Math.random() < 0.55) {
+          if (rand() < 0.55) {
             const a = rand(TAU);
             queueSpawn("twin", clamp(b.x + Math.cos(a) * 150, 60, G.W - 60), clamp(b.y + Math.sin(a) * 150, 60, G.H - 60), 0, false);
           } else spawnAround(b, ["dart", "dart"], 130);
@@ -413,7 +413,7 @@ const BOSS_AI = {
           if (countAdds() < 4) opts.push("summon");
           const a = bossNext(b, opts);
           if (a === "beam") {
-            b.rot = Math.random() < 0.5 ? 1 : -1;
+            b.rot = rand() < 0.5 ? 1 : -1;
             b.ang = Math.atan2(dy, dx) - b.rot * 0.8;
             b.state = "beamTell";
             b.t = 1.0;

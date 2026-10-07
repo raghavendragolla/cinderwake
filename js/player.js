@@ -22,6 +22,10 @@ function calcStats(run) {
     killRefund: L.refund + 5 * lv("kindling") + 8 * lv("glass"),
     hitRefund: 9,
     bossRefund: 16,
+    reachBonus: 4 * lv("reach"),
+    fleetHaste: lv("fleet") > 0 ? 0.15 + 0.05 * (lv("fleet") - 1) : 0,
+    hasOil: lv("oil") > 0,
+    oilDryHaste: 0.10 + 0.05 * Math.max(0, lv("oil") - 1),
     momentum: [0, 40, 60, 80][lv("momentum")],
     fever: lv("fever") > 0,
     wake, wakeLife: [0, 2, 3, 4][wake], wakeW: [0, 15, 20, 25][wake],
@@ -71,7 +75,7 @@ function arenaMargin(base) {
 function makePlayer() {
   return {
     x: G.W / 2, y: G.H / 2, vx: 0, vy: 0, r: 11,
-    aim: -Math.PI / 2, aimDist: 1e9, aimPow: 1, aimAuto: false, moveAng: -Math.PI / 2, moving: false,
+    aim: -Math.PI / 2, aimDist: (G.S ? G.S.dashDist : 235), aimPow: 1, aimAuto: false, moveAng: -Math.PI / 2, moving: false,
     hearts: 3, flame: 100, inv: 0, dash: null, alive: true,
     charging: false, charge: 0, chargedCue: false,
     buf: 0, bufPow: 1, failT: 0, freeDash: false, haste: 0, reboundT: 0,
@@ -121,7 +125,7 @@ function updateAim(p) {
     p.aimDist = Math.hypot(dx, dy);
   } else {
     if (p.moving) p.aim = p.moveAng;
-    p.aimDist = 1e9;
+    p.aimDist = G.S ? G.S.dashDist : 235;
   }
 }
 
@@ -135,7 +139,7 @@ function playerInput(p, dt) {
     p.aimAuto = false;
   }
   if (L.charge) {
-    if (Input.press && !p.charging) {
+    if ((Input.press || Input.touchPress || (Input.held && (Input.mouseDash || Input.mouseActive()))) && !p.charging) {
       p.charging = true;
       p.charge = 0;
       p.chargedCue = false;
@@ -154,9 +158,14 @@ function playerInput(p, dt) {
         p.charging = false;
       }
     }
-  } else if (Input.touch) {
-    if (Input.release) want = true;
-  } else if (Input.press) want = true;
+  } else if (Input.press) {
+    // keyboard: the keydown edge is the entire gesture; keyup never dashes
+    want = true;
+  } else if (Input.release) {
+    // mouse and touch: the pointerup edge is the entire gesture; pointer-down
+    // only begins aiming (or drawing a charge lantern's bow), never a dash
+    want = true;
+  }
 
   if (want) {
     p.buf = 0.16;
@@ -178,7 +187,21 @@ function updatePlayer(dt) {
   if (p.hurtT > 0) p.hurtT -= dt;
   if (p.buf > 0) p.buf -= dt;
   const mut = curMutation();
-  if (!p.dash && !(mut && mut.regenZero) && p.flame < S.maxFlame) p.flame = Math.min(S.maxFlame, p.flame + S.regen * dt);
+  if (G.run && G.run.practice) {
+    p.flame = S.maxFlame;
+    p.hearts = Math.max(p.hearts, 3);
+  } else if (!p.dash) {
+    if (mut && mut.regenZero) {
+      // Hungry Flame: passive regeneration is suppressed above dash cost.
+      // An emergency trickle (1.2/s) kicks in ONLY when below minimum dash cost
+      // to prevent permanent mobility lock, stopping once one dash can be afforded.
+      if (p.flame < S.dashCost) {
+        p.flame = Math.min(S.dashCost, p.flame + 1.2 * dt);
+      }
+    } else if (p.flame < S.maxFlame) {
+      p.flame = Math.min(S.maxFlame, p.flame + S.regen * dt);
+    }
+  }
 
   Input.moveVec(_mv);
   p.moving = _mv.x * _mv.x + _mv.y * _mv.y > 0.02;
@@ -189,7 +212,8 @@ function updatePlayer(dt) {
 
   if (p.dash) stepDash(p, dt);
   else {
-    const sp = S.moveSpeed * (p.haste > 0 ? 1.3 : 1) * (p.charging ? 0.5 : 1);
+    const dryBonus = (p.flame < 5 && S.hasOil) ? (1 + S.oilDryHaste) : 1;
+    const sp = S.moveSpeed * (p.haste > 0 ? 1.3 : 1) * (p.charging ? 0.5 : 1) * dryBonus;
     const k = Math.min(1, 16 * dt);
     p.vx += (_mv.x * sp - p.vx) * k;
     p.vy += (_mv.y * sp - p.vy) * k;
@@ -206,6 +230,27 @@ function updatePlayer(dt) {
     }
   }
 }
+
+/** How far a normal (non-charged, non-blink) dash travels from here:
+    mouse cursor clamped between 40 and S.dashDist (lantern max reach);
+    keyboard / touch default to S.dashDist. */
+function dashLengthFor(p) {
+  const S = G.S;
+  if (Input.touch || !Input.mouseActive()) return S.dashDist;
+  return clamp(p.aimDist, 40, S.dashDist);
+}
+
+/** Glint's blink: teleports directly to aim point (40 to S.dashDist), bursting on arrival. */
+function blinkLengthFor(p) {
+  const S = G.S;
+  let d = S.dashDist;
+  if (Input.touch) d *= p.aimAuto ? clamp(p.aimDist / S.dashDist, 0.25, 1) : Math.max(0.3, p.aimPow);
+  else if (Input.mouseActive()) {
+    d = clamp(p.aimDist, 40, S.dashDist);
+  }
+  return d;
+}
+
 
 function tryDash(p, power) {
   const S = G.S, L = G.L;
@@ -226,6 +271,12 @@ function tryDash(p, power) {
   Save.data.stats.dashes++;
 
   const ang = p.aim, dx = Math.cos(ang), dy = Math.sin(ang);
+  const isClutch = p.flame <= 15 || p.hearts <= 1;
+  if (isClutch) {
+    Sfx.clutchDash();
+    FX.ring(p.x, p.y, 8, 44, 0.28, PAL.emberRGB, 4);
+    FX.sparks(p.x, p.y, 8, ang + Math.PI, 0.7, 100, 320, PAL.gold, 0.35);
+  }
   let dmg = S.dashDmg + (overfull ? 1 : 0);
   if (S.gambit) dmg *= 2;
   if (L.blink) {
@@ -239,6 +290,8 @@ function tryDash(p, power) {
       dmg += L.dmg;
       width += 5;
     }
+  } else {
+    d = dashLengthFor(p);
   }
   if (S.undertow) undertow(p.x, p.y, dx, dy, d, width);
   p.dash = {
@@ -279,6 +332,11 @@ function stepDash(p, dt) {
     ny = clamp(ny, m, H - m);
   }
   if (!d.perfect) checkPerfectDash(p, p.x, p.y, nx, ny, d);
+  if (G.shrine && !G.shrine.claimed) {
+    const sr = 30 * 30;
+    if (segDist2(p.x, p.y, nx, ny, G.shrine.a.x, G.shrine.a.y) <= sr) claimShrine(G.shrine.a);
+    else if (segDist2(p.x, p.y, nx, ny, G.shrine.b.x, G.shrine.b.y) <= sr) claimShrine(G.shrine.b);
+  }
 
   // every enemy the blade crosses this frame, in the order it reaches them
   const hits = [];
@@ -316,11 +374,14 @@ function stepDash(p, dt) {
         d.blocked = true;
         Sfx.block();
         FX.addShake(4);
-        FX.sparks(ex, ey, 12, d.ang + Math.PI, 1.0, 120, 420, PAL.paper, 0.35);
+        FX.sparks(ex, ey, 14, d.ang + Math.PI, 1.0, 120, 420, PAL.paper, 0.35);
         FX.ring(ex, ey, 4, 30, 0.2, PAL.paperRGB, 2);
         if (e.type === "bulwark") {
-          e.flash = 0.12;
-          knock(e, d.ang, 90);
+          e.flash = 0.16;
+          e.turnLock = Math.max(e.turnLock || 0, 0.7);
+          e.stun = Math.max(e.stun || 0, 0.25);
+          FX.text(ex, ey - e.r - 12, "BLOCKED", 13, PAL.paper, 0.55);
+          knock(e, d.ang, 100);
         }
         G.hitstop = Math.max(G.hitstop, 0.05);
         endDash(p);
@@ -438,9 +499,11 @@ function firePerfect(p, d) {
   const run = G.run, st = Save.data.stats;
   run.perfectDashes = (run.perfectDashes || 0) + 1;
   st.perfectDashes = (st.perfectDashes || 0) + 1;
-  addFlame(14);
+  const bonus = (G.S.reachBonus || 0);
+  addFlame(14 + bonus);
+  if (G.S.fleetHaste) p.haste = Math.max(p.haste, 1.0);
   addScore(60, 0, 0, true);
-  FX.text(p.x, p.y - 50, "PERFECT", 19, PAL.cold, 1.0);
+  FX.text(p.x, p.y - 48, bonus ? `PERFECT +${14 + bonus}` : "PERFECT +14", 17, PAL.cold, 0.85);
   FX.ring(p.x, p.y, 8, 54, 0.3, PAL.coldRGB, 3);
   FX.sparks(p.x, p.y, 10, 0, Math.PI, 100, 260, PAL.cold, 0.4);
   Sfx.perfect();
@@ -487,9 +550,7 @@ function endDash(p) {
 /* Glint's blink: no path, just a burst where you land. */
 function doBlink(p, ang, dmg) {
   const S = G.S, m = arenaMargin(p.r + 3);
-  let d = S.dashDist;
-  if (Input.touch) d *= p.aimAuto ? clamp(p.aimDist / S.dashDist, 0.25, 1) : Math.max(0.3, p.aimPow);
-  else if (Input.mouseActive()) d = Math.min(d, Math.max(40, p.aimDist));
+  let d = blinkLengthFor(p);
   const sx = p.x, sy = p.y;
   p.x = clamp(sx + Math.cos(ang) * d, m, G.W - m);
   p.y = clamp(sy + Math.sin(ang) * d, m, G.H - m);
@@ -505,6 +566,11 @@ function doBlink(p, ang, dmg) {
 
   const cut = { id: ++G.cutSeq, kills: 0, hits: 0, ang };
   checkPerfectDash(p, sx, sy, p.x, p.y, cut);
+  if (G.shrine && !G.shrine.claimed) {
+    const sr = 30 * 30;
+    if (segDist2(sx, sy, p.x, p.y, G.shrine.a.x, G.shrine.a.y) <= sr) claimShrine(G.shrine.a);
+    else if (segDist2(sx, sy, p.x, p.y, G.shrine.b.x, G.shrine.b.y) <= sr) claimShrine(G.shrine.b);
+  }
   const R = S.burstR;
   if (S.undertow) {
     for (const e of G.enemies) {
@@ -586,7 +652,7 @@ function onCutEnd(p, cut) {
   }
   if (k >= 2) {
     addScore(25 * (k - 1) * (k - 1), 0, 0, true);
-    FX.text(p.x, p.y - 36, QUALITY_LABEL[QUALITY_TIER(k)], 20 + Math.min(26, k * 4), k >= 5 ? PAL.gold : PAL.paper, 0.9 + Math.min(0.5, k * 0.05));
+    FX.text(p.x, p.y - 36, QUALITY_LABEL[QUALITY_TIER(k)], Math.min(22, 16 + k * 2), k >= 5 ? PAL.gold : PAL.paper, 0.75);
     FX.ring(p.x, p.y, 14, 46 + k * 26, 0.34 + Math.min(0.3, k * 0.03), k >= 3 ? PAL.goldRGB : PAL.paperRGB, 2 + Math.min(6, k * 0.7));
     Sfx.multi(k);
   }
@@ -650,6 +716,7 @@ function hurtPlayer(src) {
     guardBurstExtras(p, S);
     return;
   }
+  const heartsBefore = p.hearts;
   p.hearts -= S.gambit ? 2 : 1;
   run.hits++;
   G.wave.hit = true;
@@ -686,10 +753,22 @@ function hurtPlayer(src) {
       FX.doFlash(0.5, PAL.goldRGB);
       FX.ring(p.x, p.y, 10, 280, 0.6, PAL.goldRGB, 8);
       FX.sparks(p.x, p.y, 40, 0, Math.PI, 160, 640, PAL.gold, 0.9);
-      FX.text(p.x, p.y - 44, "phoenix", 24, PAL.gold, 1.4);
-      UI.toast("The phoenix feather burns away.");
+      FX.text(p.x, p.y - 44, "phoenix", 20, PAL.gold, 1.0);
+      UI.notify("REVIVED", "Phoenix feather consumed", "disco");
       return;
     }
+    if (G.lastEmber) {
+      failLastEmber(p);
+      return;
+    }
+    if (!run.rekindled && G.state === "play" && !run.practice) {
+      startLastEmber(p, heartsBefore);
+      return;
+    }
+    run.deathFlame = p.flame;
+    run.deathHeartsBefore = heartsBefore;
+    run.deathWave = G.wave ? G.wave.n : 0;
+    run.deathEarly = !!(G.wave && G.wave.t < 6);
     p.alive = false;
     p.hearts = 0;
     G.dying = 1.5;
@@ -700,4 +779,106 @@ function hurtPlayer(src) {
     FX.addShake(10);
     slowmo(1.2, 0.25);
   }
+}
+
+/** Last Ember target ranking: plain distance first, plus a penalty for
+    targets that punish a straight cut — a shield raised at you, a boss
+    body, a Lurker still cloaked. Penalties are smaller than the distance
+    spreads they exist to bridge, so a genuinely nearer target still wins
+    and an awkward one only takes the mark when nothing better is alive. */
+function emberTargetScore(e) {
+  const p = G.player;
+  let s = dist(p.x, p.y, e.x, e.y);
+  if (e.boss) s += 260;
+  else if (e.type === "bulwark" && shieldBlocks(e, p.x, p.y)) s += 150;
+  if (e.type === "lurker" && (e.cloak === undefined || e.cloak > 0.5)) s += 90;
+  return s;
+}
+
+function startLastEmber(p, heartsBefore) {
+  const run = G.run;
+  p.hearts = 0;
+  p.inv = 0.6;
+  p.flame = Math.max(p.flame, 40);
+
+  let target = null;
+  const candidates = G.enemies.filter(e => !e.dead && e.spawn <= 0 && !e.intangible && e.type !== "moon");
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => emberTargetScore(a) - emberTargetScore(b));
+    target = candidates[0];
+  } else {
+    const a = rand(TAU);
+    const px = clamp(p.x + Math.cos(a) * 180, 50, G.W - 50);
+    const py = clamp(p.y + Math.sin(a) * 180, 50, G.H - 50);
+    target = spawnEnemy("blot", px, py, null);
+    target.spawn = 0;
+    target.speed = 25;
+  }
+  target.isEmberTarget = true;
+  target.flash = 0.5;
+
+  G.lastEmber = {
+    t: 2.5,
+    maxT: 2.5,
+    target,
+    heartsBefore,
+  };
+
+  slowmo(0.5, 0.45);
+  FX.addShake(9);
+  FX.doFlash(0.35, "255,80,30");
+  FX.ring(p.x, p.y, 14, 160, 0.5, PAL.emberRGB, 4);
+  FX.sparks(p.x, p.y, 25, 0, Math.PI, 120, 480, PAL.ember, 0.6);
+  Sfx.lastEmber();
+  FX.text(p.x, p.y - 52, "LAST EMBER", 22, PAL.gold, 1.3);
+}
+
+function failLastEmber(p) {
+  if (!G.lastEmber) return;
+  const run = G.run;
+  const heartsBefore = G.lastEmber.heartsBefore || 1;
+  if (G.lastEmber.target) G.lastEmber.target.isEmberTarget = false;
+  G.lastEmber = null;
+
+  run.deathFlame = p.flame;
+  run.deathHeartsBefore = heartsBefore;
+  run.deathWave = G.wave ? G.wave.n : 0;
+  run.deathEarly = !!(G.wave && G.wave.t < 6);
+  p.alive = false;
+  p.hearts = 0;
+  G.dying = 1.5;
+  Sfx.die();
+  FX.sparks(p.x, p.y, 46, 0, Math.PI, 80, 620, PAL.ember, 1.1);
+  FX.flecks(p.x, p.y, 16, 0, Math.PI, 80, 380, PAL.gold, 5);
+  FX.ring(p.x, p.y, 10, 240, 0.9, PAL.emberRGB, 5);
+  FX.addShake(10);
+  slowmo(1.2, 0.25);
+}
+
+function rekindlePlayer(p) {
+  if (!G.lastEmber) return;
+  const run = G.run;
+  run.rekindled = true;
+  Save.data.stats.rekindles = (Save.data.stats.rekindles || 0) + 1;
+  if (G.lastEmber.target) {
+    G.lastEmber.target.isEmberTarget = false;
+    G.lastEmber.target.stun = Math.max(G.lastEmber.target.stun, 1.2);
+  }
+  G.lastEmber = null;
+
+  p.hearts = 1;
+  p.flame = Math.max(p.flame, 45);
+  p.inv = Math.max(p.inv, 1.6);
+  G.combo = 0;
+
+  burstAt(p.x, p.y, 175, 1, "blast", null);
+
+  G.hitstop = Math.max(G.hitstop, 0.08);
+  slowmo(0.25, 0.4);
+  Sfx.rekindle();
+  FX.doFlash(0.45, PAL.goldRGB);
+  FX.ring(p.x, p.y, 12, 220, 0.6, PAL.goldRGB, 6);
+  FX.sparks(p.x, p.y, 35, 0, Math.PI, 140, 550, PAL.gold, 0.8);
+  FX.text(p.x, p.y - 48, "REKINDLED", 24, PAL.gold, 1.4);
+  UI.notify("REKINDLED", "The flame refused to die.", "disco");
 }

@@ -7,6 +7,25 @@ const SLAM_R = 132; // Husk slam radius
 const BLAST_R = 96; // Blister burst radius
 const LUNGE_SPEED = 640;
 const LUNGE_TIME = 0.48;
+const LURK_WAKE_R = 165; // how close you have to walk before a Lurker stirs
+const LURK_LUNGE_SPEED = 560;
+const LURK_LUNGE_TIME = 0.4;
+
+/* A short, shared history of where the player has actually been — Shades
+   walk this instead of chasing the player's live position, so their whole
+   threat is legible from your own last few seconds of movement. */
+const TRAIL_SAMPLE_DT = 0.08;
+const TRAIL_MAX_AGE = 3.0;
+let playerTrail = [];
+let trailAcc = 0;
+function recordPlayerTrail(dt) {
+  trailAcc += dt;
+  if (trailAcc < TRAIL_SAMPLE_DT) return;
+  trailAcc = 0;
+  playerTrail.push({ x: G.player.x, y: G.player.y });
+  const maxLen = Math.ceil(TRAIL_MAX_AGE / TRAIL_SAMPLE_DT);
+  if (playerTrail.length > maxLen) playerTrail.shift();
+}
 
 let ENEMY_UID = 0;
 
@@ -20,17 +39,21 @@ function makeEnemy(type, x, y, o) {
     facing: Math.atan2(G.player.y - y, G.player.x - x),
     state: 0, t: 0, age: 0, spawn: 0.28, stun: 0, flash: 0, burnCd: 0,
     lastCut: -1, dead: false, elite: false, atk: false, hitWall: false,
-    wob: rand(TAU), side: Math.random() < 0.5 ? -1 : 1, score: info.score,
+    wob: rand(TAU), side: rand() < 0.5 ? -1 : 1, score: info.score,
   };
   switch (type) {
     case "dart": e.t = (w && w.n === 2) ? rand(1.4, 2.2) : rand(0.9, 1.9); e.lock = 0; break;
-    case "bulwark": e.arc = 1.08; e.turn = 1.5; break;
+    case "bulwark": e.arc = 1.08; e.turn = 1.5; e.turnLock = 0; e.shoveCd = rand(1.5, 2.5); e.shoveT = 0; break;
     case "seer": e.t = rand(1.3, 2.3); break;
     case "husk": e.cd = 0.4; break;
     case "clotling": e.stun = 0.5; break;
     case "twin": e.warm = 1.1; break;
-    case "hunter": e.side = Math.random() < 0.5 ? 1 : -1; e.aiT = rand(0.05, 0.15); e.t = rand(1.2, 2.2); break;
+    case "hunter": e.side = rand() < 0.5 ? 1 : -1; e.aiT = rand(0.05, 0.15); e.t = rand(1.2, 2.2); break;
     case "coordinator": e.aiT = rand(0.05, 0.15); e.pulseT = 2.5; break;
+    case "lurker": e.cloak = 1; break;
+    case "seep": e.dropT = rand(0.3, 0.7); break;
+    case "trapper": e.plantCd = rand(0.2, 0.5); break;
+    case "shade": e.delay = rand(1.0, 1.5); break;
   }
   if (o) Object.assign(e, o);
   if (e.elite) {
@@ -41,6 +64,13 @@ function makeEnemy(type, x, y, o) {
     if (type === "bulwark") e.turn = 2.0;
     // an elite is never just bigger numbers: it plays by one new rule
     e.eliteMod = type === "moon" ? null : pick(ELITE_MOD_ORDER);
+    if (e.eliteMod && !Save.data.seenElite[e.eliteMod]) {
+      // counted for real by Waves.update just after spawnEnemy returns; this
+      // only decides whether tonight is the first time anyone has seen it
+      const mod = ELITE_MODS[e.eliteMod];
+      if (G.run) G.run.newDisc.push("Elite: " + mod.name);
+      UI.notify("DISCOVERED", mod.name, "disco");
+    }
     e.baseSpeed = e.speed;
     if (e.eliteMod === "armored") e.armorUp = true;
     else if (e.eliteMod === "regenerating") e.regenCd = 0;
@@ -91,14 +121,19 @@ const ENEMY_AI = {
   blot(e, dt, p) {
     const dx = p.x - e.x, dy = p.y - e.y, d = Math.hypot(dx, dy) || 1;
     e.facing = Math.atan2(dy, dx);
-    const w = Math.sin(e.age * 2.2 + e.wob) * 0.35, ux = dx / d, uy = dy / d;
-    steer(e, (ux - uy * w) * e.speed, (uy + ux * w) * e.speed, dt, 4);
+    const close = d < 145;
+    const sp = e.speed * (close ? 1.22 : 1.0);
+    const w = Math.sin(e.age * 2.4 + e.wob) * (close ? 0.2 : 0.38);
+    const ux = dx / d, uy = dy / d;
+    steer(e, (ux - uy * w) * sp, (uy + ux * w) * sp, dt, close ? 5.2 : 4);
+    if (close && Math.random() < 0.08) e.flash = 0.06;
   },
 
   clotling(e, dt, p) {
     const dx = p.x - e.x, dy = p.y - e.y, d = Math.hypot(dx, dy) || 1;
     e.facing = Math.atan2(dy, dx);
-    steer(e, (dx / d) * e.speed, (dy / d) * e.speed, dt, 5);
+    const skitter = (Math.sin(e.age * 13 + e.wob) > -0.2) ? 1.15 : 0.72;
+    steer(e, (dx / d) * e.speed * skitter, (dy / d) * e.speed * skitter, dt, 5.5);
   },
 
   /* Circle at range, show the lunge line, leap, then stand winded. */
@@ -117,7 +152,7 @@ const ENEMY_AI = {
         const fair = typeof AI === "object" ? AI.checkFairness(p, G.enemies, G.hazards).isFair : true;
         if (canAttack && fair) {
           e.state = 1;
-          e.t = 0.68;
+          e.t = 0.72;
           e.lock = e.facing;
           Sfx.telegraph();
         } else {
@@ -128,7 +163,7 @@ const ENEMY_AI = {
     } else if (e.state === 1) {
       e.atk = true;
       steer(e, 0, 0, dt, 10);
-      if (e.t > 0.30) e.lock = Math.atan2(dy, dx);
+      if (e.t > 0.36) e.lock = Math.atan2(dy, dx);
       e.facing = e.lock;
       e.t -= dt;
       if (e.t <= 0) {
@@ -157,9 +192,35 @@ const ENEMY_AI = {
     }
   },
 
-  /* Walks where it faces, and only turns slowly. The back is open. */
+  /* Walks where it faces, and only turns slowly. The back is open.
+     Predictable commitment and turn stagger create fair flanking openings. */
   bulwark(e, dt, p) {
-    const want = Math.atan2(p.y - e.y, p.x - e.x);
+    const dx = p.x - e.x, dy = p.y - e.y, d = Math.hypot(dx, dy) || 1;
+    const want = Math.atan2(dy, dx);
+    const diff = Math.abs(angDiff(want, e.facing));
+
+    if (e.turnLock > 0) {
+      e.turnLock -= dt;
+      // While turn is locked (committed forward stride, wall bump, or shield block stagger),
+      // it marches along its committed facing and CANNOT pivot, giving the player an opening to flank!
+      const spMult = e.shoveT > 0 ? 1.25 : 0.75;
+      steer(e, Math.cos(e.facing) * e.speed * spMult, Math.sin(e.facing) * e.speed * spMult, dt, 3.5);
+      if (e.shoveT > 0) e.shoveT -= dt;
+      return;
+    }
+
+    if (e.shoveCd > 0) e.shoveCd -= dt;
+    // Human-friendly bait opening:
+    // If player approaches the front arc (d < 125, angle < 0.55 rad), Bulwark commits to a forward stride!
+    if (d < 125 && diff < 0.55 && e.shoveCd <= 0) {
+      e.shoveCd = rand(2.4, 3.4);
+      e.shoveT = 0.65;
+      e.turnLock = 0.65;
+      e.flash = 0.12;
+      steer(e, Math.cos(e.facing) * e.speed * 1.25, Math.sin(e.facing) * e.speed * 1.25, dt, 5);
+      return;
+    }
+
     e.facing = turnToward(e.facing, want, e.turn * dt);
     steer(e, Math.cos(e.facing) * e.speed, Math.sin(e.facing) * e.speed, dt, 3);
   },
@@ -199,7 +260,7 @@ const ENEMY_AI = {
         const fair = typeof AI === "object" ? AI.checkFairness(p, G.enemies, G.hazards).isFair : true;
         if (canAttack && fair) {
           e.state = 1;
-          e.t = 1.0;
+          e.t = 1.05;
           Sfx.telegraph();
         } else {
           e.t = rand(0.3, 0.6);
@@ -209,7 +270,7 @@ const ENEMY_AI = {
     } else {
       e.atk = true;
       steer(e, 0, 0, dt, 6);
-      if (e.t > 0.32) e.facing = Math.atan2(dy, dx); // the last third is locked
+      if (e.t > 0.40) e.facing = Math.atan2(dy, dx); // the last portion is locked
       e.t -= dt;
       if (e.t <= 0) {
         addBolt(e.x + Math.cos(e.facing) * 14, e.y + Math.sin(e.facing) * 14, e.facing, 530);
@@ -237,9 +298,17 @@ const ENEMY_AI = {
       steer(e, (dx / d) * e.speed, (dy / d) * e.speed, dt, 3);
       e.cd -= dt;
       if (d < 108 && e.cd <= 0) {
-        e.state = 1;
-        e.t = 0.78;
-        Sfx.telegraph();
+        const canAttack = typeof AI === "object" ? AI.requestAttackToken(e.id) : true;
+        const fair = typeof AI === "object" ? AI.checkFairness(p, G.enemies, G.hazards).isFair : true;
+        if (canAttack && fair) {
+          e.state = 1;
+          e.t = 0.82;
+          e.atk = true;
+          Sfx.telegraph();
+        } else {
+          e.cd = rand(0.3, 0.55);
+          if (canAttack && typeof AI === "object") AI.releaseAttackToken(e.id);
+        }
       }
     } else if (e.state === 1) {
       e.atk = true;
@@ -253,6 +322,7 @@ const ENEMY_AI = {
         e.state = 2;
         e.t = 1.1;
         e.atk = false;
+        if (typeof AI === "object") AI.releaseAttackToken(e.id);
       }
     } else {
       steer(e, 0, 0, dt, 8);
@@ -313,7 +383,7 @@ const ENEMY_AI = {
         const fair = typeof AI === "object" ? AI.checkFairness(p, G.enemies, G.hazards).isFair : true;
         if (canAttack && fair) {
           e.state = 1;
-          e.t = 0.55;
+          e.t = 0.65;
           e.lock = e.facing;
           Sfx.telegraph();
         } else {
@@ -324,7 +394,7 @@ const ENEMY_AI = {
     } else if (e.state === 1) {
       e.atk = true;
       steer(e, 0, 0, dt, 10);
-      if (e.t > 0.25) e.lock = Math.atan2(dy, dx);
+      if (e.t > 0.32) e.lock = Math.atan2(dy, dx);
       e.facing = e.lock;
       e.t -= dt;
       if (e.t <= 0) {
@@ -370,12 +440,142 @@ const ENEMY_AI = {
     if (e.pulseT <= 0) {
       e.pulseT = rand(2.8, 3.8);
       FX.ring(e.x, e.y, 8, 90, 0.4, PAL.goldRGB, 2);
+      Sfx.command();
       for (const o of G.enemies) {
         if (o.dead || o === e || dist2(e.x, e.y, o.x, o.y) > 280 * 280) continue;
         if (o.side !== undefined) o.side = -o.side;
         o.flash = 0.08;
+        o.markT = 0.9; // read out: "these allies are being steered right now"
       }
     }
+  },
+
+  /* Stays still and nearly invisible until you walk too close, then wakes,
+     locks on, and lunges once. A patient player can cut it before it stirs. */
+  lurker(e, dt, p) {
+    const dx = p.x - e.x, dy = p.y - e.y, d = Math.hypot(dx, dy) || 1;
+    if (e.state === 0 || e.state === undefined) {
+      e.atk = false;
+      e.cloak = Math.min(1, (e.cloak === undefined ? 1 : e.cloak) + dt * 0.6);
+      e.checkT = (e.checkT || 0) - dt;
+      if (d < LURK_WAKE_R && e.checkT <= 0) {
+        e.checkT = 0.18;
+        const canAttack = typeof AI === "object" ? AI.requestAttackToken(e.id) : true;
+        const fair = typeof AI === "object" ? AI.checkFairness(p, G.enemies, G.hazards).isFair : true;
+        if (canAttack && fair) {
+          e.state = 1;
+          e.t = 0.42;
+          e.lock = Math.atan2(dy, dx);
+          e.facing = e.lock;
+          e.atk = true;
+          Sfx.telegraph();
+        } else if (canAttack && typeof AI === "object") {
+          AI.releaseAttackToken(e.id);
+        }
+      }
+      return;
+    }
+    if (e.state === 1) {
+      e.cloak = Math.max(0, e.cloak - dt * 7);
+      steer(e, 0, 0, dt, 10);
+      e.t -= dt;
+      if (e.t <= 0) {
+        e.state = 2;
+        e.t = LURK_LUNGE_TIME;
+        Sfx.lunge();
+      }
+      return;
+    }
+    if (e.state === 2) {
+      const sp = LURK_LUNGE_SPEED * (e.elite ? 1.1 : 1);
+      e.vx = Math.cos(e.lock) * sp;
+      e.vy = Math.sin(e.lock) * sp;
+      e.t -= dt;
+      if (e.t <= 0 || e.hitWall) {
+        e.state = 3;
+        e.t = 0.9;
+        e.atk = false;
+        if (typeof AI === "object") AI.releaseAttackToken(e.id);
+      }
+      return;
+    }
+    // state 3: spent and exposed, then settles back into stillness
+    steer(e, 0, 0, dt, 8);
+    e.facing = Math.atan2(dy, dx);
+    e.t -= dt;
+    if (e.t <= 0) {
+      e.state = 0;
+      e.cloak = 0;
+      e.checkT = 0.5;
+    }
+  },
+
+  /* Slow and unthreatening by itself — the ground it leaves behind is the
+     real danger. Kill it fast, or the arena keeps shrinking around it. */
+  seep(e, dt, p) {
+    const dx = p.x - e.x, dy = p.y - e.y, d = Math.hypot(dx, dy) || 1;
+    e.facing = Math.atan2(dy, dx);
+    steer(e, (dx / d) * e.speed, (dy / d) * e.speed, dt, 2.5);
+    e.dropT -= dt;
+    if (e.dropT <= 0) {
+      e.dropT = rand(1.1, 1.5);
+      addPool(e.x, e.y, 58, 4.2, "pool");
+      e.flash = 0.15;
+    }
+  },
+
+  /* Keeps its distance, picks a spot, plants a device, then moves to the
+     next. The device is the threat; cut the Trapper before it finishes. */
+  trapper(e, dt, p) {
+    const dx = p.x - e.x, dy = p.y - e.y, d = Math.hypot(dx, dy) || 1;
+    if (e.state === 1) {
+      e.atk = true;
+      steer(e, 0, 0, dt, 7);
+      e.facing = Math.atan2(dy, dx);
+      e.t -= dt;
+      if (e.t <= 0) {
+        addTrap(e.x, e.y, 46, 0.5, 5.5, "trap");
+        e.state = 0;
+        e.atk = false;
+        e.plantCd = rand(2.2, 3.2);
+        e.targetPt = null;
+        if (typeof AI === "object") AI.releaseAttackToken(e.id);
+      }
+      return;
+    }
+    e.atk = false;
+    e.facing = Math.atan2(dy, dx);
+    if (!e.targetPt || dist2(e.x, e.y, e.targetPt.x, e.targetPt.y) < 24 * 24) {
+      const a = rand(TAU), dd = rand(130, 260), m = 50;
+      e.targetPt = { x: clamp(p.x + Math.cos(a) * dd, m, G.W - m), y: clamp(p.y + Math.sin(a) * dd, m, G.H - m) };
+    }
+    const tdx = e.targetPt.x - e.x, tdy = e.targetPt.y - e.y, td = Math.hypot(tdx, tdy) || 1;
+    steer(e, (tdx / td) * e.speed, (tdy / td) * e.speed, dt, 3.5);
+    e.plantCd -= dt;
+    if (td < 26 && e.plantCd <= 0) {
+      const canAttack = typeof AI === "object" ? AI.requestAttackToken(e.id) : true;
+      const fair = typeof AI === "object" ? AI.checkFairness(p, G.enemies, G.hazards).isFair : true;
+      if (canAttack && fair) {
+        e.state = 1;
+        e.t = 0.6;
+        Sfx.fuse();
+      } else {
+        e.plantCd = rand(0.3, 0.6);
+        if (canAttack && typeof AI === "object") AI.releaseAttackToken(e.id);
+      }
+    }
+  },
+
+  /* Walks a few seconds of your own path, not your current position. Lead
+     it somewhere on purpose, or outrun your own trail and leave it behind. */
+  shade(e, dt, p) {
+    const steps = Math.round(e.delay / TRAIL_SAMPLE_DT);
+    const idx = playerTrail.length - 1 - steps;
+    const target = idx >= 0 ? playerTrail[idx] : (playerTrail[0] || p);
+    const dx = target.x - e.x, dy = target.y - e.y, d = Math.hypot(dx, dy) || 1;
+    e.facing = Math.atan2(dy, dx);
+    const sp = 118;
+    steer(e, d < 6 ? 0 : (dx / d) * sp, d < 6 ? 0 : (dy / d) * sp, dt, 4);
   },
 
   moon() {},
@@ -383,11 +583,13 @@ const ENEMY_AI = {
 
 function updateEnemies(dt) {
   const p = G.player, list = G.enemies, W = G.W, H = G.H;
+  recordPlayerTrail(dt);
   for (let i = 0; i < list.length; i++) {
     const e = list[i];
     if (e.dead) continue;
     if (e.flash > 0) e.flash -= dt;
     if (e.burnCd > 0) e.burnCd -= dt;
+    if (e.markT > 0) e.markT -= dt;
     e.age += dt;
     if (e.spawn > 0) {
       e.spawn -= dt;
@@ -424,6 +626,10 @@ function updateEnemies(dt) {
     else if (e.x > W - m) { e.x = W - m; e.hitWall = true; }
     if (e.y < m) { e.y = m; e.hitWall = true; }
     else if (e.y > H - m) { e.y = H - m; e.hitWall = true; }
+    if (e.hitWall && e.type === "bulwark") {
+      e.turnLock = Math.max(e.turnLock || 0, 0.7);
+      e.flash = Math.max(e.flash || 0, 0.08);
+    }
   }
 
   // Keep bodies from stacking, without scattering a good line.
@@ -451,7 +657,8 @@ function updateEnemies(dt) {
       const e = list[i];
       if (e.dead || e.spawn > 0 || e.stun > 0 || e.intangible) continue;
       const rr = e.r * 0.86 + 7;
-      if (dist2(p.x, p.y, e.x, e.y) < rr * rr) {
+      const d2 = dist2(p.x, p.y, e.x, e.y);
+      if (d2 < rr * rr) {
         const hadWard = p.ward;
         hurtPlayer(e.type);
         if (!hadWard && e.eliteMod === "vampiric" && !e.dead && e.hp < e.maxHp) {
@@ -460,6 +667,9 @@ function updateEnemies(dt) {
           FX.ring(e.x, e.y, e.r * 0.5, e.r + 12, 0.3, "220,40,60", 2);
         }
         break;
+      } else if (e.atk && !e.nearMissed && d2 <= (rr + 24) * (rr + 24)) {
+        e.nearMissed = true;
+        if (typeof onNearMiss === "function") onNearMiss(p, e.x, e.y, e.type);
       }
     }
   }

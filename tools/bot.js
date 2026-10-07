@@ -2,10 +2,56 @@
    It plays whole runs at many times real speed through the same update
    functions the real game uses, and checks every frame for bad numbers. */
 window.CWBot = (function () {
-  const bot = { mx: 0, my: 0, ax: 0, ay: 0, cd: 0, skill: 0.7, hold: 0, moveT: 0 };
+  const bot = { mx: 0, my: 0, ax: 0, ay: 0, cd: 0, skill: 0.7, moveT: 0,
+    profile: "key", // "key" | "mouse" | "touch" — which device the bot pretends to be
+    gest: null };   // the input gesture currently in flight, if any
   Input.moveVec = (out) => { out.x = bot.mx; out.y = bot.my; return out; };
   Input.mouseActive = () => true;
   Input.mouseArena = (out) => { out.x = bot.ax; out.y = bot.ay; return out; };
+
+  /* ---- human-like input gestures --------------------------------------
+     The bot never pokes the dash path directly. Each decision starts a
+     small gesture that emits exactly the edges a real device would, in
+     the order a real hand produces them, across frames — so the game's
+     own input handling (edges, buffering, charge) is exercised the way
+     a human exercises it, and one gesture can only ever yield one dash.
+       key:   keydown edge dashes; keyup ends the gesture, dashing nothing
+       mouse: mousedown only aims; the mouseup edge dashes
+       touch: touchstart only aims (or draws a charge); the touchend
+              release dashes, aimed along the drag                       */
+  function advanceGesture() {
+    const g = bot.gest;
+    if (!g) return;
+    const L = G.L;
+    g.t++;
+    const hold = L.charge && g.t <= g.holdFrames; // keep drawing the bow
+    if (g.kind === "key") {
+      if (g.t === 1) { Input.press = true; Input.keyDash = true; Input.held = true; }
+      else if (hold) { Input.held = true; }
+      else { Input.press = false; Input.keyDash = false; Input.held = false; bot.gest = null; }
+    } else if (g.kind === "mouse") {
+      if (g.t === 1) { Input.held = true; Input.mouseDash = true; Input.mouseDragging = true; }
+      else if (hold) { Input.held = true; }
+      else { Input.held = false; Input.mouseDash = false; Input.mouseDragging = false; Input.release = true; bot.gest = null; }
+    } else {
+      if (g.t === 1) { // touchstart: only a charge may begin here, never a dash
+        Input.touch = true; Input.held = true;
+        Input.aimS.id = 7; Input.aimS.ox = g.sx; Input.aimS.oy = g.sy;
+        Input.aimS.x = g.sx; Input.aimS.y = g.sy;
+        Input.touchPress = true;
+      } else if (g.t === 2) { // the aiming drag
+        Input.aimS.x = g.sx + Math.cos(g.ang) * g.dragLen;
+        Input.aimS.y = g.sy + Math.sin(g.ang) * g.dragLen;
+      } else if (hold) { Input.held = true; }
+      else { // touchend: the one dash edge, aimed along the drag
+        const dx = Input.aimS.x - Input.aimS.ox, dy = Input.aimS.y - Input.aimS.oy;
+        Input.aimVec.x = dx; Input.aimVec.y = dy; Input.aimVec.len = Math.hypot(dx, dy);
+        Input.tap = Input.aimVec.len < 14;
+        Input.aimS.id = null; Input.held = false; Input.release = true;
+        bot.gest = null;
+      }
+    }
+  }
 
   function evalDash(p, a, es, S, L, dOverride) {
     const dx = Math.cos(a), dy = Math.sin(a);
@@ -43,7 +89,8 @@ window.CWBot = (function () {
 
   function step() {
     const p = G.player, S = G.S, L = G.L;
-    if (!p || !p.alive) return;
+    if (!p || !p.alive) { bot.gest = null; return; }
+    advanceGesture(); // an in-flight gesture finishes even while dodging
     const es = G.enemies.filter((e) => !e.dead && e.spawn <= 0 && !e.intangible);
     const sk = bot.skill, see = () => Math.random() < 0.5 + 0.5 * sk; // weaker players miss some threats
     let near = 1e9, urgent = false, target = null, td = 1e9;
@@ -105,8 +152,7 @@ window.CWBot = (function () {
     for (const b of G.bolts) if (!b.mine && sk > 0.5 && dist2(b.x, b.y, p.x, p.y) < 60 * 60) urgent = true;
 
     bot.cd -= 1 / 60;
-    if (L.charge && bot.hold > 0) { bot.hold -= 1 / 60; Input.held = bot.hold > 0; if (bot.hold <= 0) Input.release = true; return; }
-    if (bot.cd > 0 || p.dash) return;
+    if (bot.gest || bot.cd > 0 || p.dash) return;
     const cost = S.dashCost;
     if (p.flame + 0.01 < cost && !p.freeDash) return;
     let best = -99, bestA = 0, bestD = 0;
@@ -125,8 +171,13 @@ window.CWBot = (function () {
       const a = bestA + (Math.random() * 2 - 1) * (1 - sk) * 0.3;
       const d = L.blink && bestD ? Math.min(S.dashDist, bestD) : S.dashDist;
       bot.ax = p.x + Math.cos(a) * d; bot.ay = p.y + Math.sin(a) * d;
-      Input.press = true; Input.held = true;
-      if (L.charge) bot.hold = 0.05; else Input.held = false;
+      // begin the gesture for the bot's current input profile; the dash
+      // request travels through the game's real edge handling from here
+      bot.gest = {
+        kind: bot.profile, t: 0, ang: a,
+        holdFrames: L.charge ? 3 : 0, // the old bot's 0.05s quick-tap charge
+        sx: window.innerWidth * 0.75, sy: window.innerHeight * 0.5, dragLen: 90,
+      };
       bot.cd = 0.1 + (1 - sk) * 0.55 + Math.random() * 0.1;
     }
   }
@@ -134,13 +185,23 @@ window.CWBot = (function () {
   /** Play one whole run synchronously. pick(offers) chooses a card index. */
   function playRun(opts) {
     bot.skill = opts.skill;
+    bot.profile = opts.profile || "key";
+    bot.gest = null;
+    // profile-scoped input state: a touch run must never leak Input.touch
+    // into the next run's aiming (the real game clears it on mouse movement,
+    // but the bot dispatches no pointer moves between runs)
+    Input.touch = bot.profile === "touch";
+    Input.tap = false;
     Save.data.lanterns = LANTERN_ORDER.slice();
     if (opts.allCards) Save.data.cards = UPGRADES.filter((u) => u.price).map((u) => u.id);
     Save.data.duskMax = 5;
     UI.hide();
     startRun(opts.lantern || "wick", opts.dusk || 0, null);
-    const log = { waves: [], bad: null, steps: 0 };
+    const log = { waves: [], waveLog: [], bad: null, steps: 0 };
     let waveStart = 0, lastWave = 1;
+    // per-wave telemetry: consumed at each wave transition, so balance runs
+    // can report where hits/dashes/Flame actually happened
+    let wl = { hits0: 0, dashes0: 0, kills0: 0, flame0: G.player.flame, waveRef: G.wave };
     const maxWave = opts.maxWave || 15, maxSteps = (opts.maxMinutes || 22) * 3600;
     const prefer = opts.prefer || null;
     while (log.steps < maxSteps) {
@@ -153,7 +214,19 @@ window.CWBot = (function () {
         if (!isFinite(p.x) || !isFinite(p.y) || !isFinite(p.flame) || !isFinite(G.run.score) || p.flame < -0.01) { log.bad = "player " + JSON.stringify([p.x, p.y, p.flame, G.run.score]); break; }
         for (const e of G.enemies) if (!isFinite(e.x) || !isFinite(e.y) || !isFinite(e.hp)) { log.bad = "enemy " + e.type; break; }
         if (log.bad) break;
-        if (G.wave.n !== lastWave) { log.waves.push(Math.round((log.steps - waveStart) / 60)); waveStart = log.steps; lastWave = G.wave.n; }
+        if (G.wave.n !== lastWave) {
+          const secs = Math.round((log.steps - waveStart) / 60);
+          log.waves.push(secs);
+          log.waveLog.push({
+            n: lastWave, time: secs,
+            hits: G.run.hits - wl.hits0, dashes: G.run.dashes - wl.dashes0, kills: G.run.kills - wl.kills0,
+            flameStart: Math.round(wl.flame0), flameEnd: Math.round(p.flame),
+            mod: wl.waveRef.mod ? wl.waveRef.mod.id : "", boss: !!wl.waveRef.boss,
+            hit: !!wl.waveRef.hit,
+          });
+          waveStart = log.steps; lastWave = G.wave.n;
+          wl = { hits0: G.run.hits, dashes0: G.run.dashes, kills0: G.run.kills, flame0: p.flame, waveRef: G.wave };
+        }
       } else if (G.state === "upgrade") {
         let i = (Math.random() * G.offers.length) | 0;
         if (prefer) { const j = G.offers.findIndex((id) => prefer.includes(id) || prefer.includes(UP[id].build)); if (j >= 0) i = j; }
@@ -161,10 +234,18 @@ window.CWBot = (function () {
         UI.pickCard(i);
       } else if (G.state === "victory") {
         if (maxWave > 15) goEndless(); else { endRun(true); break; }
+      } else if (G.state === "checkpoint") {
+        if (opts.retryCheckpoints && (opts.maxRetries === undefined || (log.retries || 0) < opts.maxRetries)) {
+          log.retries = (log.retries || 0) + 1;
+          restartCheckpoint();
+        } else {
+          endRun(false);
+          break;
+        }
       } else break;
     }
     const s = G.summary || {};
-    const out = { lantern: opts.lantern || "wick", skill: opts.skill, wave: s.wave !== undefined ? s.wave : (G.wave ? G.wave.n : (G.run ? G.run.wave : 1)), score: s.score !== undefined ? s.score : (G.run ? G.run.score : 0), kills: s.kills !== undefined ? s.kills : (G.run ? G.run.kills : 0), cinders: s.cinders || 0, ach: s.achCinders || 0, time: Math.round(s.time || (G.run ? G.run.time : 0)), hits: G.run ? G.run.hits : -1, hearts: G.player ? G.player.hearts : -1, multi: s.bestMulti || 0, combo: s.bestCombo || 0, killedBy: s.killedBy || "", cleared: !!s.cleared, up: Object.keys(s.up || (G.run ? G.run.up : {}) || {}).join(","), waves: log.waves.join("/"), bad: log.bad, state: G.state, steps: log.steps };
+    const out = { lantern: opts.lantern || "wick", skill: opts.skill, profile: bot.profile, wave: s.wave !== undefined ? s.wave : (G.wave ? G.wave.n : (G.run ? G.run.wave : 1)), score: s.score !== undefined ? s.score : (G.run ? G.run.score : 0), kills: s.kills !== undefined ? s.kills : (G.run ? G.run.kills : 0), cinders: s.cinders || 0, ach: s.achCinders || 0, time: Math.round(s.time || (G.run ? G.run.time : 0)), hits: G.run ? G.run.hits : -1, hearts: G.player ? G.player.hearts : -1, multi: s.bestMulti || 0, combo: s.bestCombo || 0, killedBy: s.killedBy || "", cleared: !!s.cleared, up: Object.keys(s.up || (G.run ? G.run.up : {}) || {}).join(","), waves: log.waves.join("/"), waveLog: log.waveLog, bad: log.bad, state: G.state, steps: log.steps, rekindled: !!(G.run && G.run.rekindled), bossKills: G.run ? (G.run.bossKills || 0) : 0, dashes: s.dashes || (G.run ? G.run.dashes : 0), perfects: s.perfectDashes || (G.run ? G.run.perfectDashes : 0), nearMisses: s.nearMisses || 0, flameSpent: Math.round(s.flameSpent || 0), flameGained: Math.round(s.flameGained || 0), quality: s.quality || { clean: 0, sharp: 0, brutal: 0, masterful: 0 }, synergies: (s.synergies || []).length, deathCause: s.deathCause || "" };
     if (G.state !== "over") { out.stuck = G.state + " w" + (G.wave ? G.wave.n : "?") + " left " + (G.wave ? G.wave.left : "?") + " enemies " + G.enemies.map((e) => e.type + ":" + e.state).join(","); }
     quitToMenu();
     return out;

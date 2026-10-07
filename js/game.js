@@ -12,15 +12,19 @@ const G = {
   offers: null, offerRelic: false, summary: null, shrine: null,
 };
 
-function newRun(lantern, dusk) {
+function newRun(lantern, dusk, seed) {
+  const runSeed = (typeof Rng === "object" && Rng.setSeed) ? Rng.setSeed(seed) : (seed || "CINDER-1001");
   return {
-    lantern, dusk, wave: 1, up: {}, score: 0, kills: 0, hearts: 3, time: 0, dashes: 0,
+    lantern, dusk, seed: runSeed, wave: 1, up: {}, score: 0, kills: 0, hearts: 3, time: 0, dashes: 0,
     bestCombo: 0, bestMulti: 0, bestMultiWave: 0, bossKills: 0, rerolls: 1, flawless: 0, stormCount: 0,
     phoenixUsed: false, endless: false, cleared: false, hits: 0, waveDone: 0,
     lastMod: "", newAch: [], achCinders: 0, newDisc: [],
-    perfectDashes: 0, quality: { clean: 0, sharp: 0, brutal: 0, masterful: 0 },
+    perfectDashes: 0, nearMisses: 0, quality: { clean: 0, sharp: 0, brutal: 0, masterful: 0 },
     flameSpent: 0, flameGained: 0, bloodKills: 0, lastShrineWave: 0,
     deathFlame: -1, deathHeartsBefore: 0, deathWave: 0, deathEarly: false,
+    rekindled: false,
+    checkpointWave: 1,
+    checkpointSnapshot: null,
   };
 }
 
@@ -31,19 +35,24 @@ function clearWorld() {
   G.combo = G.comboT = 0;
   G.killedBy = "";
   G.gloomBoss = false;
+  G.lastEmber = null;
+  G.recentExplosions = 0;
   G.offers = null;
   G.summary = null;
   G.shrine = null;
   FX.clear();
   Stains.clear();
+  Atmosphere.reset();
+  playerTrail.length = 0;
+  trailAcc = 0;
 }
 
 /** Start fresh, or resume from a saved snapshot. */
-function startRun(lanternId, dusk, saved) {
+function startRun(lanternId, dusk, saved, seed) {
   clearWorld();
   FX.configure();
   if (!saved && Save.data.run) bankSavedRun();
-  const run = saved ? Object.assign(newRun(saved.lantern, saved.dusk), saved) : newRun(lanternId, dusk);
+  const run = saved ? Object.assign(newRun(saved.lantern, saved.dusk, saved.seed), saved) : newRun(lanternId, dusk, seed);
   G.run = run;
   G.mods = duskMods(run.dusk);
   G.L = LANTERNS[run.lantern];
@@ -58,13 +67,13 @@ function startRun(lanternId, dusk, saved) {
       const mid = G.L.masteryCard;
       run.up[mid] = (run.up[mid] || 0) + 1;
       G.S = calcStats(run);
-      UI.toast("Mastery Start: " + UP[mid].name);
+      UI.notify("MASTERY START", UP[mid].name, "disco");
     }
     if (Save.hasPerk("kindled")) {
       const id = pick(KINDLED_POOL);
       run.up[id] = 1;
       G.S = calcStats(run);
-      UI.toast("Kindled start: " + UP[id].name);
+      UI.notify("KINDLED START", UP[id].name, "disco");
     }
   }
   p.hearts = clamp(run.hearts, 1, G.S.maxHearts);
@@ -75,15 +84,171 @@ function startRun(lanternId, dusk, saved) {
   beginWave(run.wave);
 }
 
+function startPractice() {
+  clearWorld();
+  FX.configure();
+  const run = newRun("wick", 0, "PRACTICE");
+  run.practice = true;
+  G.run = run;
+  G.mods = duskMods(0);
+  G.L = LANTERNS.wick;
+  G.S = calcStats(run);
+  const p = (G.player = makePlayer());
+  p.hearts = 5;
+  p.flame = G.S.maxFlame;
+  G.state = "play";
+  Input.reset();
+  Input.capture = true;
+  UI.notify("PRACTICE ARENA", "Infinite flame. Press Esc to exit.", "shrine");
+  beginWave(1);
+}
+
+function createCheckpointSnapshot(run, p) {
+  return {
+    wave: run.wave,
+    checkpointWave: run.checkpointWave || run.wave,
+    lantern: run.lantern,
+    dusk: run.dusk,
+    seed: run.seed,
+    up: Object.assign({}, run.up),
+    score: run.score,
+    lifetimeScore: (Save.data && Save.data.stats && Save.data.stats.lifetimeScore) || 0,
+    kills: run.kills,
+    hearts: p ? p.hearts : run.hearts,
+    dashes: run.dashes,
+    time: run.time,
+    rerolls: run.rerolls,
+    flawless: run.flawless,
+    stormCount: run.stormCount,
+    phoenixUsed: !!run.phoenixUsed,
+    rekindled: !!run.rekindled,
+    waveDone: run.waveDone,
+    perfectDashes: run.perfectDashes,
+    quality: Object.assign({}, run.quality),
+    flameSpent: run.flameSpent,
+    flameGained: run.flameGained,
+    bestCombo: run.bestCombo,
+    bestMulti: run.bestMulti,
+    bossKills: run.bossKills,
+    lastShrineWave: run.lastShrineWave,
+    cinders: Save.data.cinders,
+    newDisc: run.newDisc ? run.newDisc.slice() : [],
+  };
+}
+
+function restartCheckpoint() {
+  const run = G.run;
+  if (!run || !run.checkpointSnapshot) return false;
+  const snap = run.checkpointSnapshot;
+
+  clearWorld();
+  FX.configure();
+
+  run.wave = snap.wave;
+  run.checkpointWave = snap.checkpointWave;
+  run.up = Object.assign({}, snap.up);
+  run.score = snap.score;
+  if (Save.data && Save.data.stats && typeof snap.lifetimeScore === "number") {
+    Save.data.stats.lifetimeScore = snap.lifetimeScore;
+    Save.data.lifetimeScore = snap.lifetimeScore;
+  }
+  run.kills = snap.kills;
+  run.time = snap.time;
+  run.dashes = snap.dashes;
+  run.rerolls = snap.rerolls;
+  run.flawless = snap.flawless;
+  run.stormCount = snap.stormCount;
+  run.phoenixUsed = snap.phoenixUsed;
+  run.rekindled = snap.rekindled;
+  run.waveDone = snap.waveDone;
+  run.perfectDashes = snap.perfectDashes;
+  run.quality = Object.assign({}, snap.quality);
+  run.flameSpent = snap.flameSpent;
+  run.flameGained = snap.flameGained;
+  run.bestCombo = snap.bestCombo;
+  run.bestMulti = snap.bestMulti;
+  run.bossKills = snap.bossKills;
+  run.lastShrineWave = snap.lastShrineWave;
+  run.newDisc = snap.newDisc ? snap.newDisc.slice() : [];
+
+  if (snap.cinders !== undefined) Save.data.cinders = snap.cinders;
+
+  G.mods = duskMods(run.dusk);
+  G.L = LANTERNS[run.lantern];
+  G.S = calcStats(run);
+
+  const p = (G.player = makePlayer());
+  p.x = G.W / 2;
+  p.y = G.H / 2;
+  p.vx = p.vy = 0;
+  p.hearts = clamp(snap.hearts, 1, G.S.maxHearts);
+  p.flame = G.S.maxFlame;
+  p.inv = 1.2;
+  p.alive = true;
+
+  G.state = "play";
+  G.dying = 0;
+  G.lastEmber = null;
+  G.combo = 0;
+  G.comboT = 0;
+  G.killedBy = "";
+
+  Input.reset();
+  Input.capture = true;
+
+  UI.hide();
+  beginWave(run.wave);
+  return true;
+}
+
+function showCheckpointDeath() {
+  const run = G.run;
+  if (!run) { endRun(false); return; }
+  G.state = "checkpoint";
+  Input.capture = false;
+
+  const w = G.wave;
+  const waveNum = run.wave || 1;
+  const waveName = WAVE_NAMES[waveNum] || (w && w.boss ? ENEMY_INFO[w.boss].name : "");
+  const why = deathCause(run);
+
+  let bestQ = "None";
+  if (run.quality) {
+    if (run.quality.masterful > 0) bestQ = "Masterful (" + run.quality.masterful + ")";
+    else if (run.quality.brutal > 0) bestQ = "Brutal (" + run.quality.brutal + ")";
+    else if (run.quality.sharp > 0) bestQ = "Sharp (" + run.quality.sharp + ")";
+    else if (run.quality.clean > 0) bestQ = "Clean (" + run.quality.clean + ")";
+  }
+
+  const info = {
+    wave: waveNum,
+    waveName: waveName,
+    why: why,
+    score: run.score,
+    kills: run.kills,
+    flame: Math.round(run.deathFlame >= 0 ? run.deathFlame : (G.player ? G.player.flame : 0)),
+    perfectDashes: run.perfectDashes || 0,
+    bestQuality: bestQ,
+    rekindled: !!run.rekindled,
+  };
+
+  UI.showCheckpoint(info);
+  Save.persist();
+}
+
 function beginWave(n) {
   const run = G.run, p = G.player;
   run.wave = n;
+  run.checkpointWave = n;
   run.hearts = p.hearts;
   p.ward = G.S.ward;
-  p.flame = Math.max(p.flame, G.S.maxFlame * 0.6);
+  p.flame = G.S.maxFlame;
   G.bolts.length = G.hazards.length = 0;
-  Save.data.run = sanitizeRun(run);
-  Save.persist();
+  if (!run.practice) {
+    run.checkpointSnapshot = createCheckpointSnapshot(run, p);
+    Save.data.run = sanitizeRun(run);
+    Save.persist();
+  }
   if (n >= 20) unlockAch("endless20");
   if (n >= 30) unlockAch("endless30");
   Waves.begin(n);
@@ -102,13 +267,41 @@ function addFlame(n) {
 function addScore(base, x, y, quiet) {
   const pts = Math.round(base * (1 + Math.min(G.combo, 40) * 0.05));
   G.run.score += pts;
+  if (Save.data && Save.data.stats) {
+    Save.data.stats.lifetimeScore = (Save.data.stats.lifetimeScore || 0) + pts;
+    Save.data.lifetimeScore = Save.data.stats.lifetimeScore;
+  }
   if (!quiet && Save.data.settings.numbers) FX.text(x, y, "" + pts, 13, PAL.ash, 0.6);
+}
+
+/** A dash through one of a Cinder Shrine's two motes. Both vanish together,
+    whichever is chosen — what each grants was already labeled above it.  */
+function claimShrine(mote) {
+  if (!G.shrine || G.shrine.claimed) return;
+  G.shrine.claimed = true;
+  const p = G.player;
+  if (mote.type === "flame") {
+    p.flame = G.S.maxFlame + (G.S.overheat ? 50 : 0);
+    FX.text(mote.x, mote.y - 20, "flame restored", 15, PAL.gold, 0.9);
+  } else {
+    Save.data.cinders += 15;
+    Save.data.totalCinders += 15;
+    FX.text(mote.x, mote.y - 20, "+15 Cinders", 15, PAL.gold, 0.9);
+  }
+  Sfx.achieve();
+  FX.ring(mote.x, mote.y, 6, 70, 0.4, PAL.goldRGB, 4);
+  FX.sparks(mote.x, mote.y, 16, 0, Math.PI, 100, 320, PAL.gold, 0.6);
+  G.shrine = null;
 }
 
 /* ------------------------------------------------------------ Combat */
 /** Returns 0 = no effect, 1 = hurt, 2 = killed. `cut` counts chain kills. */
 function damageEnemy(e, dmg, src, ang, cut) {
   if (e.dead) return 0;
+  const wasEmberTarget = !!(G.lastEmber && (G.lastEmber.target === e || e.isEmberTarget));
+  if (src === "dash" && wasEmberTarget) {
+    rekindlePlayer(G.player);
+  }
   if (e.boss) return damageBoss(e, dmg, src, ang, cut);
   e.hp -= dmg;
   e.flash = 0.12;
@@ -125,6 +318,7 @@ function damageEnemy(e, dmg, src, ang, cut) {
       return 1;
     }
     killEnemy(e, src, ang, cut);
+    if (wasEmberTarget) { G.combo = 0; G.comboT = 0; }
     return 2;
   }
   if (cut) cut.hits++;
@@ -152,9 +346,14 @@ function killEnemy(e, src, ang, cut) {
     run.kills++;
     st.kills++;
     G.wave.kills++;
-    G.combo++;
-    G.comboT = 3;
-    if (G.combo > run.bestCombo) run.bestCombo = G.combo;
+    if (!e.isEmberTarget) {
+      G.combo++;
+      G.comboT = 3;
+      if (G.combo > run.bestCombo) run.bestCombo = G.combo;
+    } else {
+      G.combo = 0;
+      G.comboT = 0;
+    }
     addScore(e.score, e.x, e.y - e.r - 8);
     let refund = 10;
     if (src === "dash") refund = S.killRefund;
@@ -222,17 +421,24 @@ function killEnemy(e, src, ang, cut) {
   FX.flecks(e.x, e.y, 4, a, spread, 60, 240, PAL.wash2, e.r * 0.4);
   FX.sparks(e.x, e.y, 6 + Math.min(14, n * 3), a, spread * 0.8, 160, 480 + n * 50, n >= 2 ? PAL.gold : PAL.ember, 0.4);
   Stains.add(e.x, e.y, e.r * 1.5, a);
+  FX.deathFlourish(e, a);
 
   // --- what each enemy leaves behind ---
   if (e.type === "blister") {
     addBlast(e.x, e.y, BLAST_R, self ? 0.01 : src === "blast" ? 0.2 : 0.38);
   } else if (e.type === "clot") {
     const outs = [a + 1.6, a - 1.6, a + Math.PI];
-    for (const o of outs) {
-      const oa = o + rand(-0.3, 0.3);
-      const c = spawnEnemy("clotling", clamp(e.x + Math.cos(oa) * 14, 14, G.W - 14), clamp(e.y + Math.sin(oa) * 14, 14, G.H - 14), null);
-      c.spawn = 0;
-      knock(c, oa, 300);
+    FX.ring(e.x, e.y, 10, 38, 0.35, PAL.coldRGB, 4);
+    FX.sparks(e.x, e.y, 12, 0, Math.PI, 80, 240, PAL.cold, 0.4);
+    Sfx.telegraph();
+    const activeClotlings = G.enemies.filter(en => !en.dead && en.type === "clotling").length;
+    const maxNew = Math.max(1, Math.min(3, 7 - activeClotlings));
+    for (let i = 0; i < maxNew; i++) {
+      const o = outs[i];
+      const oa = o + rand(-0.25, 0.25);
+      const c = spawnEnemy("clotling", clamp(e.x + Math.cos(oa) * 16, 16, G.W - 16), clamp(e.y + Math.sin(oa) * 16, 16, G.H - 16), null);
+      c.spawn = 0.32 + i * 0.08;
+      knock(c, oa, 240);
     }
   } else if (e.type === "twin" && e.mate && !e.mate.dead) {
     e.mate.flash = 0.2;
@@ -245,6 +451,9 @@ function killEnemy(e, src, ang, cut) {
 
 function damageBoss(b, dmg, src, ang, cut) {
   if (b.intangible) return 0;
+  if (src === "dash" && G.lastEmber && (G.lastEmber.target === b || b.isEmberTarget)) {
+    rekindlePlayer(G.player);
+  }
   if (b.invuln) {
     if (src === "dash") {
       Sfx.tink();
@@ -334,6 +543,19 @@ function reflectBolt(b) {
   Sfx.reflect();
   FX.ring(b.x, b.y, 4, 24, 0.2, PAL.goldRGB, 2);
 }
+function onNearMiss(p, x, y, src) {
+  if (!p || !p.alive || p.inv > 0 || p.dash) return;
+  const run = G.run;
+  if (!run) return;
+  run.nearMisses = (run.nearMisses || 0) + 1;
+  addFlame(3);
+  Sfx.nearMiss();
+  FX.ring(p.x, p.y, 4, 28, 0.22, PAL.goldRGB, 2);
+  const ang = Math.atan2(p.y - y, p.x - x) || rand(TAU);
+  FX.sparks(p.x, p.y, 5, ang, 0.6, 60, 200, PAL.gold, 0.3);
+  if (Save.data.settings.numbers) FX.text(p.x, p.y - 28, "CLOSE +3", 13, PAL.gold, 0.65);
+}
+
 function updateBolts(dt) {
   const p = G.player, list = G.bolts;
   for (let i = list.length - 1; i >= 0; i--) {
@@ -343,9 +565,13 @@ function updateBolts(dt) {
     b.y += b.vy * dt;
     if (b.x < -20 || b.x > G.W + 20 || b.y < -20 || b.y > G.H + 20) b.dead = true;
     else if (!b.mine) {
-      if (p.alive && !p.dash && p.inv <= 0 && dist2(b.x, b.y, p.x, p.y) < (b.r + 7) * (b.r + 7)) {
+      const d2 = dist2(b.x, b.y, p.x, p.y);
+      if (p.alive && !p.dash && p.inv <= 0 && d2 < (b.r + 7) * (b.r + 7)) {
         b.dead = true;
         hurtPlayer("bolt");
+      } else if (!b.nearMissed && p.alive && !b.dead && d2 <= 38 * 38) {
+        b.nearMissed = true;
+        onNearMiss(p, b.x, b.y, "bolt");
       }
     } else {
       for (const e of G.enemies) {
@@ -372,11 +598,11 @@ function addShard(x, y, ang, from) {
     }
     if (near.length) {
       near.sort((a, b) => a.d - b.d);
-      const t = near[(Math.random() * Math.min(3, near.length)) | 0].e;
+      const t = near[(rand() * Math.min(3, near.length)) | 0].e;
       ang = Math.atan2(t.y - y, t.x - x) + rand(-0.06, 0.06);
     } else ang = rand(TAU);
   }
-  G.shards.push({ x, y, vx: Math.cos(ang) * 640, vy: Math.sin(ang) * 640, life: 0.55, bounce: G.S.ricochet ? 1 : 0, last: from });
+  G.shards.push({ x, y, vx: Math.cos(ang) * 640, vy: Math.sin(ang) * 640, life: 0.7, bounce: G.S.ricochet ? 1 : 0, last: from });
 }
 function updateShards(dt) {
   const list = G.shards;
@@ -447,7 +673,7 @@ function updateWakes(dt) {
       w.shardCd = (w.shardCd === undefined ? rand(0.2, 0.4) : w.shardCd) - dt;
       if (w.shardCd <= 0) {
         w.shardCd = 0.45;
-        const t = Math.random();
+        const t = rand();
         addShard(lerp(w.x1, w.x2, t), lerp(w.y1, w.y2, t), null, null);
       }
     }
@@ -512,13 +738,32 @@ function addRing(x, y, r, speed, maxR, src = "ring") {
 function addBlast(x, y, R, fuse) {
   G.hazards.push({ type: "blast", x, y, R, fuse, max: Math.max(fuse, 0.01) });
 }
+/** A patch of ground that stays dangerous for a while — unlike a ring or a
+    blast, it does not resolve in one beat; it changes where you can stand
+    until it fades, and can tick the player more than once if they linger. */
+function addPool(x, y, r, life, src = "pool") {
+  G.hazards.push({ type: "pool", x, y, r, life, max: life, hitCd: 0, src });
+}
+/** A single placed device, visibly arming before it's live — unlike a pool,
+    it is a fixed point to remember and route around, not a growing field. */
+function addTrap(x, y, r, armTime, life, src = "trap") {
+  G.hazards.push({ type: "trap", x, y, r, armT: armTime, maxArm: armTime, life, max: life, armed: false, src });
+}
 function explode(x, y, R) {
   Sfx.explode();
   FX.addShake(7);
-  FX.ring(x, y, 10, R, 0.3, PAL.coldRGB, 7);
-  FX.ring(x, y, 6, R * 0.7, 0.36, PAL.paperRGB, 3);
-  FX.sparks(x, y, 22, 0, Math.PI, 160, 560, PAL.cold, 0.5);
-  FX.flecks(x, y, 10, 0, Math.PI, 120, 420, PAL.paper, 5);
+  const now = G.realT;
+  if (!G.lastExplosionT || now - G.lastExplosionT > 0.45) {
+    G.recentExplosions = 0;
+  }
+  G.recentExplosions = (G.recentExplosions || 0) + 1;
+  G.lastExplosionT = now;
+  const damp = 1 / (1 + (G.recentExplosions - 1) * 0.85);
+
+  FX.ring(x, y, 10, R, 0.3, PAL.coldRGB, Math.max(3, Math.round(7 * damp)));
+  FX.ring(x, y, 6, R * 0.7, 0.36, PAL.paperRGB, Math.max(2, Math.round(3 * damp)));
+  FX.sparks(x, y, Math.max(7, Math.round(22 * damp)), 0, Math.PI, 160, 560, PAL.cold, 0.5);
+  FX.flecks(x, y, Math.max(3, Math.round(10 * damp)), 0, Math.PI, 120, 420, PAL.paper, 5);
   Stains.add(x, y, R * 0.55, rand(TAU));
   let kills = 0;
   const list = G.enemies, n = list.length;
@@ -543,11 +788,14 @@ function updateHazards(dt) {
     let done = false;
     if (hz.type === "ring") {
       hz.r += hz.speed * dt;
-      if (!hz.hit && p.alive && !p.dash && p.inv <= 0) {
+      if (p.alive && !p.dash && p.inv <= 0) {
         const d = dist(p.x, p.y, hz.x, hz.y);
-        if (Math.abs(d - hz.r) < 16) {
+        if (!hz.hit && Math.abs(d - hz.r) < 16) {
           hz.hit = true;
           hurtPlayer(hz.src || "ring");
+        } else if (!hz.nearMissed && !hz.hit && Math.abs(d - hz.r) < 26) {
+          hz.nearMissed = true;
+          onNearMiss(p, hz.x, hz.y, "ring");
         }
       }
       done = hz.r >= hz.maxR;
@@ -576,6 +824,36 @@ function updateHazards(dt) {
         addBolt(hz.x, -24, Math.PI / 2, 560);
         Sfx.bolt();
         continue;
+      }
+    } else if (hz.type === "pool") {
+      hz.life -= dt;
+      hz.hitCd -= dt;
+      if (p.alive && !p.dash && p.inv <= 0 && hz.hitCd <= 0) {
+        if (dist2(p.x, p.y, hz.x, hz.y) < hz.r * hz.r) {
+          hz.hitCd = 0.8;
+          hurtPlayer(hz.src || "pool");
+        }
+      }
+      done = hz.life <= 0;
+    } else if (hz.type === "trap") {
+      if (!hz.armed) {
+        hz.armT -= dt;
+        if (hz.armT <= 0) {
+          hz.armed = true;
+          Sfx.telegraph();
+        }
+      } else {
+        hz.life -= dt;
+        if (p.alive && !p.dash && p.inv <= 0 && dist2(p.x, p.y, hz.x, hz.y) < hz.r * hz.r) {
+          done = true;
+          list.splice(i, 1);
+          FX.ring(hz.x, hz.y, 8, hz.r + 24, 0.32, PAL.coldRGB, 4);
+          FX.sparks(hz.x, hz.y, 14, 0, Math.PI, 120, 360, PAL.cold, 0.45);
+          Sfx.explode();
+          hurtPlayer(hz.src || "trap");
+          continue;
+        }
+        done = hz.life <= 0;
       }
     } else if (hz.type === "nova") {
       hz.fuse -= dt;
@@ -636,12 +914,35 @@ function gameUpdate(rawDt) {
     }
   }
   FX.update(dt, rawDt, p);
+  Atmosphere.update(dt);
   Stains.update(rawDt);
   if (typeof Music === "object" && Music.updateTension) Music.updateTension(dt);
 
+  if (G.lastEmber) {
+    G.lastEmber.t -= rawDt;
+    const le = G.lastEmber;
+    if (le.target && le.target.dead) {
+      const c = G.enemies.filter(e => !e.dead && e.spawn <= 0 && !e.intangible && e.type !== "moon");
+      if (c.length > 0) {
+        c.sort((a, b) => dist2(p.x, p.y, a.x, a.y) - dist2(p.x, p.y, b.x, b.y));
+        le.target = c[0];
+        le.target.isEmberTarget = true;
+      }
+    }
+    if (le.t <= 0) {
+      failLastEmber(p);
+    }
+  }
+
   if (G.dying > 0) {
     G.dying -= rawDt;
-    if (G.dying <= 0) endRun(false);
+    if (G.dying <= 0) {
+      if (G.run && !G.run.practice) {
+        showCheckpointDeath();
+      } else {
+        endRun(false);
+      }
+    }
   } else if (w.cleared && G.state === "play") {
     w.clearT -= rawDt;
     if (w.clearT <= 0) afterWave();
@@ -653,12 +954,17 @@ function waveCleared() {
   const w = G.wave, run = G.run, p = G.player;
   w.cleared = true;
   run.waveDone = w.n;
+  run.checkpointWave = w.n + 1;
   w.clearT = w.boss ? 2.4 : 1.3;
   for (const b of G.bolts) FX.sparks(b.x, b.y, 3, 0, Math.PI, 40, 140, PAL.cold, 0.3);
   G.bolts.length = G.hazards.length = 0;
   p.inv = Math.max(p.inv, w.clearT + 0.6);
   const bonus = 40 * w.n * (w.hit ? 1 : 2);
   run.score += bonus;
+  if (Save.data && Save.data.stats) {
+    Save.data.stats.lifetimeScore = (Save.data.stats.lifetimeScore || 0) + bonus;
+    Save.data.lifetimeScore = Save.data.stats.lifetimeScore;
+  }
   if (!w.hit) {
     run.flawless++;
     if (run.flawless >= 3) unlockAch("flawless3");
@@ -666,7 +972,7 @@ function waveCleared() {
   if (!w.boss && w.misses === 0 && w.kills >= 10) unlockAch("everycut");
   if (!w.boss) slowmo(0.45, 0.35);
   Sfx.waveClear();
-  UI.banner(w.boss ? ENEMY_INFO[w.boss].name + " falls" : w.hit ? "Wave cleared" : "Flawless", "+" + fmt(bonus), 1.25);
+  UI.banner(w.boss ? ENEMY_INFO[w.boss].name + " falls" : w.hit ? "Wave cleared" : "Flawless", "+" + fmt(bonus), 1.0);
   Save.data.tutorialDone = true;
   if (w.n === CAMPAIGN_WAVES && !run.cleared) grantClear();
   Music.setMood(0.15, false);
@@ -684,7 +990,7 @@ function grantClear() {
   if (run.dusk === d.duskMax && d.duskMax < DUSK_TIERS.length - 1) {
     d.duskMax++;
     d.duskSel = d.duskMax;
-    UI.toast(DUSK_TIERS[d.duskMax].name + " unlocked. " + DUSK_TIERS[d.duskMax].rule);
+    UI.notify("DUSK UNLOCKED", DUSK_TIERS[d.duskMax].name, "disco");
   }
 }
 
@@ -763,8 +1069,14 @@ function takeUpgrade(id) {
   for (const sid of activeSynergies(run)) {
     if (prevSyn.includes(sid)) continue;
     const s = SYN[sid];
+    const firstEver = !Save.data.seenSynergy[sid];
     Save.data.seenSynergy[sid] = (Save.data.seenSynergy[sid] || 0) + 1;
-    UI.toast("SYNERGY UNLOCKED — " + s.name + ". " + s.desc, "syn");
+    if (firstEver) {
+      run.newDisc.push("Synergy: " + s.name);
+      UI.notify("NEW SYNERGY", s.name, "syn");
+    } else {
+      UI.notify("SYNERGY ACTIVE", s.name, "syn");
+    }
     Sfx.achieve();
   }
   if (id === "heart") p.hearts = Math.min(G.S.maxHearts, p.hearts + 1);
@@ -788,6 +1100,7 @@ function goEndless() {
 /* ------------------------------------------------------ End of a run */
 /** Pay out a run and fold it into lifetime stats. Returns the summary. */
 function settleRun(run) {
+  if (run.practice) return { cinders: 0, prevBest: Save.data.stats.bestScore, newBest: false };
   const d = Save.data, st = d.stats;
   const mult = duskMods(run.dusk).cinderMult * (1 + 0.35 * (run.up.soot || 0));
   // 4 per wave cleared, 25 per boss, plus the square root of the score:
@@ -803,6 +1116,7 @@ function settleRun(run) {
   st.bestCombo = Math.max(st.bestCombo, run.bestCombo);
   st.bestMulti = Math.max(st.bestMulti, run.bestMulti);
   const bl = d.byLantern[run.lantern] || (d.byLantern[run.lantern] = { best: 0, wave: 0, clears: 0, runs: 0 });
+  const levelBefore = masteryLevel(bl);
   bl.runs = (bl.runs || 0) + 1;
   bl.best = Math.max(bl.best || 0, run.score || 0);
   bl.wave = Math.max(bl.wave || 0, run.wave || 0);
@@ -813,6 +1127,22 @@ function settleRun(run) {
   bl.bossKills = (bl.bossKills || 0) + (run.bossKills || 0);
   bl.bestCombo = Math.max(bl.bestCombo || 0, run.bestCombo || 0);
   bl.bestMulti = Math.max(bl.bestMulti || 0, run.bestMulti || 0);
+  const levelAfter = masteryLevel(bl);
+  run.masteryUp = levelAfter > levelBefore ? levelAfter : 0;
+  if (run.masteryUp) {
+    const L = MASTERY_LEVELS.find((m) => m.id === levelAfter);
+    UI.notify("LANTERN MASTERY", L.name.toUpperCase() + " — " + LANTERNS[run.lantern].name, "disco");
+  }
+  if (run.wave > CAMPAIGN_WAVES) d.bestEndless = Math.max(d.bestEndless || 0, run.wave);
+  if (run.cleared && run.time > 0) d.fastestClear = d.fastestClear > 0 ? Math.min(d.fastestClear, run.time) : run.time;
+  d.lastRun = { wave: run.wave, lantern: run.lantern, cleared: !!run.cleared, cinders };
+  // a daily-seeded run compares fairly against itself across days, and
+  // against anyone else who played the same day's seed
+  if (run.seed && typeof Rng === "object" && run.seed === Rng.todaySeed()) {
+    if (d.daily.date !== run.seed) { d.daily.date = run.seed; d.daily.best = 0; d.daily.played = 0; }
+    d.daily.played++;
+    d.daily.best = Math.max(d.daily.best, run.score);
+  }
   d.run = null;
   Save.persist();
   return { cinders, prevBest, newBest: run.score > prevBest && run.score > 0 };
@@ -823,7 +1153,7 @@ function bankSavedRun() {
   const r = Save.data.run;
   if (!r) return;
   const s = settleRun(Object.assign(newRun(r.lantern, r.dusk), r));
-  if (s.cinders > 0) UI.toast("Banked " + fmt(s.cinders) + " Cinders from your unfinished run.");
+  if (s.cinders > 0) UI.notify("BANKED", fmt(s.cinders) + " Cinders", "disco");
 }
 
 /** A one-line highlight the run is proud of. */
@@ -832,6 +1162,17 @@ function bestMoment(run) {
   if (run.perfectDashes > 0) return "A perfect dash, timed right through the danger.";
   if (run.bestCombo >= 10) return "A combo " + run.bestCombo + " kills long.";
   return "Every wave, one cut at a time.";
+}
+/** Why the run ended, from numbers actually tracked at the moment of the
+    fatal hit — never a guess. Falls back to the plain "what hit you" line
+    when none of the stronger signals apply.                             */
+function deathCause(run) {
+  const S = G.S;
+  if (run.deathFlame >= 0 && S && run.deathFlame < S.dashCost) return "Overextended — no Flame left to dash away.";
+  if (run.deathHeartsBefore === 1) return "Caught at your last heart.";
+  if (run.deathEarly && run.deathWave > 1) return "Caught before you'd found your footing this wave.";
+  const info = ENEMY_INFO[G.killedBy];
+  return "Put out by " + killerName(G.killedBy) + (info && info.tip ? ". " + info.tip : ".");
 }
 /** A concrete, reachable next target, nearest first. */
 function nextGoal(run) {
@@ -865,22 +1206,37 @@ function endRun(banked) {
     banked, score: run.score, wave: run.wave, kills: run.kills, time: run.time, bestCombo: run.bestCombo,
     bestMulti: run.bestMulti, cinders: s.cinders, achCinders: run.achCinders, newBest: s.newBest, prevBest: s.prevBest,
     newAch: run.newAch.slice(), killedBy: banked ? "" : G.killedBy, near, cleared: run.cleared, lantern: run.lantern,
-    dusk: run.dusk, up: Object.assign({}, run.up),
+    dusk: run.dusk, up: Object.assign({}, run.up), hits: run.hits, seed: run.seed || "", nearMisses: run.nearMisses || 0,
     dashes: run.dashes, perfectDashes: run.perfectDashes, quality: Object.assign({}, run.quality),
-    flameSpent: run.flameSpent, flameGained: run.flameGained,
+    flameSpent: run.flameSpent, flameGained: run.flameGained, rekindled: !!run.rekindled,
     synergies: activeSynergies(run).map((id) => SYN[id].name),
     bestMoment: bestMoment(run), nextGoal: nextGoal(run),
+    deathCause: banked ? "" : deathCause(run), newDisc: run.newDisc.slice(), masteryUp: run.masteryUp || 0,
   };
+  if (!run.practice) {
+    const histEntry = {
+      date: new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      lantern: run.lantern,
+      wave: run.wave,
+      score: run.score,
+      kills: run.kills,
+      seed: run.seed || "",
+      cleared: !!run.cleared,
+      killedBy: banked ? "abandoned" : (killerName(G.killedBy) || "danger"),
+    };
+    Save.data.history = [histEntry].concat(Save.data.history || []).slice(0, 10);
+  }
+  Save.persist();
   Music.setMood(0.05, false);
   UI.showOver(G.summary);
 }
 
 /** Restart from the pause menu: settle the current run, then begin anew. */
-function restartRun() {
+function restartRun(sameSeed) {
   const run = G.run;
   run.hearts = G.player.hearts;
   settleRun(run);
-  startRun(run.lantern, run.dusk, null);
+  startRun(run.lantern, run.dusk, null, sameSeed ? run.seed : null);
 }
 
 function quitToMenu() {
@@ -896,6 +1252,7 @@ function quitToMenu() {
 
 /* -------------------------------------------------------- Achievements */
 function unlockAch(id) {
+  if (G.run && G.run.practice) return; // a sandbox run earns nothing real
   const d = Save.data, a = ACH[id];
   if (!a || d.ach[id]) return;
   d.ach[id] = Date.now();
@@ -906,13 +1263,13 @@ function unlockAch(id) {
     G.run.achCinders += a.reward;
   }
   Sfx.achieve();
-  UI.toast(a.name + ". +" + a.reward + " Cinders", "ach");
+  UI.notify("ACHIEVEMENT UNLOCKED", a.name, "ach");
   // some lanterns are earned, not bought
   for (const lid of LANTERN_ORDER) {
     const L = LANTERNS[lid];
     if (L.needAch === id && !d.lanterns.includes(lid)) {
       d.lanterns.push(lid);
-      UI.toast("New lantern: " + L.name + ". " + L.tag + ".", "ach");
+      UI.notify("LANTERN UNLOCKED", L.name + " Lantern", "ach");
     }
   }
   if (id !== "collector" && LANTERN_ORDER.every((l) => d.lanterns.includes(l))) unlockAch("collector");

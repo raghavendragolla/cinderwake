@@ -86,8 +86,56 @@ const Stains = {
   },
 };
 
+/** The particle pool's fixed size (the max `cap` ever used). Pre-allocated
+    once so the hottest path in the game — a multi-kill chain — never asks
+    the GC for new objects; it just reuses a dead slot and overwrites it. */
+const PART_POOL_MAX = 520;
+
+/* A few embers drifting through the dark during real play — pure
+   atmosphere, never combat-relevant. Deliberately its own tiny system,
+   separate from FX.parts, so ambience can never compete with combat
+   feedback for pool budget. Capped low; off entirely under reduced
+   motion, since it's decoration, never a gameplay signal.               */
+const Atmosphere = {
+  motes: [], cap: 14, spawnT: 0,
+  reset() { this.motes.length = 0; this.spawnT = 0; },
+  update(dt) {
+    if (FX.reduced) { if (this.motes.length) this.motes.length = 0; return; }
+    this.spawnT -= dt;
+    if (this.spawnT <= 0 && this.motes.length < this.cap) {
+      this.spawnT = rand(0.8, 1.8);
+      const x = rand(0, G.W), y = G.H + rand(10, 40);
+      const life = rand(6, 11);
+      this.motes.push({ x, y, vx: rand(-10, 10), vy: rand(-26, -10), life, max: life, size: rand(1, 2.2), col: Math.random() < 0.7 ? PAL.ember : PAL.gold });
+    }
+    for (let i = this.motes.length - 1; i >= 0; i--) {
+      const m = this.motes[i];
+      m.life -= dt;
+      if (m.life <= 0 || m.x < -20 || m.x > G.W + 20 || m.y < -20) { this.motes.splice(i, 1); continue; }
+      m.vx += rand(-8, 8) * dt; // a gentle, idle wander, never a straight line
+      m.x += m.vx * dt;
+      m.y += m.vy * dt;
+    }
+  },
+  draw(ctx) {
+    if (!this.motes.length) return;
+    ctx.globalCompositeOperation = "lighter";
+    for (const m of this.motes) {
+      const k = m.life / m.max, fade = 1 - Math.abs(2 * k - 1); // fades in, then out
+      ctx.globalAlpha = 0.2 * fade;
+      ctx.fillStyle = m.col;
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, m.size, 0, TAU);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+  },
+};
+
 const FX = {
   parts: [], rings: [], texts: [], streaks: [], motes: [], ghosts: [],
+  partN: 0, // count of `parts` currently live; the rest of the pool sits dead and unused
   cap: 520,
   reduced: false,
   shakeScale: 1,
@@ -98,7 +146,8 @@ const FX = {
   pulse: 0, // Flame ring pulse when a refund lands
 
   clear() {
-    this.parts.length = this.rings.length = this.texts.length = 0;
+    this.partN = 0;
+    this.rings.length = this.texts.length = 0;
     this.streaks.length = this.motes.length = this.ghosts.length = 0;
     this.shake = this.flash = this.hurt = this.zoom = this.pulse = 0;
   },
@@ -106,6 +155,10 @@ const FX = {
     this.reduced = Save.reducedMotion();
     this.shakeScale = Save.data.settings.shake;
     this.cap = this.reduced ? 220 : 520;
+    // pre-allocate the pool exactly once; later calls just resize `cap`
+    while (this.parts.length < PART_POOL_MAX) {
+      this.parts.push({ x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 1, size: 1, col: PAL.ember, type: 0, drag: 3.2, rot: 0 });
+    }
   },
 
   addShake(n) {
@@ -126,8 +179,10 @@ const FX = {
   /* type 0 = additive spark (drawn as a short line along its velocity),
      type 1 = solid fleck (a small rotating shard of paper or ink).     */
   part(x, y, vx, vy, life, size, col, type, drag) {
-    if (this.parts.length >= this.cap) return;
-    this.parts.push({ x, y, vx, vy, life, max: life, size, col, type: type | 0, drag: drag === undefined ? 3.2 : drag, rot: Math.random() * TAU });
+    if (this.partN >= this.cap) return;
+    const q = this.parts[this.partN++];
+    q.x = x; q.y = y; q.vx = vx; q.vy = vy; q.life = life; q.max = life;
+    q.size = size; q.col = col; q.type = type | 0; q.drag = drag === undefined ? 3.2 : drag; q.rot = Math.random() * TAU;
   },
   sparks(x, y, n, ang, spread, s0, s1, col, life) {
     if (this.reduced) n = Math.ceil(n * 0.5);
@@ -159,6 +214,100 @@ const FX = {
     if (this.ghosts.length > 40) return;
     this.ghosts.push({ x, y, ang, life, max: life, scale: scale || 1, rgb: rgb || null });
   },
+  /** A few extra, type-specific particles layered on the shared kill
+      feedback, so a death reads as "this enemy", not just "an enemy".
+      Every pattern reuses the existing part/ring/streak primitives —
+      no new drawing code, just a different shape per identity.         */
+  deathFlourish(e, ang) {
+    const x = e.x, y = e.y, f = e.facing !== undefined ? e.facing : ang;
+    switch (e.type) {
+      case "blot": // ink splatter, not just paper flecks
+        for (let i = 0; i < 6; i++) {
+          const a = rand(TAU), s = rand(40, 140);
+          this.part(x, y, Math.cos(a) * s, Math.sin(a) * s, rand(0.3, 0.6), rand(1.5, 3), PAL.soot, 1, 3.5);
+        }
+        break;
+      case "dart": // a directional shard burst along its last heading
+        for (let i = 0; i < 8; i++) {
+          const a = f + rand(-0.3, 0.3), s = rand(260, 480);
+          this.part(x, y, Math.cos(a) * s, Math.sin(a) * s, rand(0.25, 0.4), rand(1.5, 2.5), PAL.ember, 0, 2.2);
+        }
+        break;
+      case "bulwark": { // the shield fracturing along the arc it held
+        const arc = e.arc || 1.0;
+        for (let i = 0; i < 10; i++) {
+          const a = f + rand(-arc, arc), s = rand(120, 300);
+          this.part(x + Math.cos(a) * e.r, y + Math.sin(a) * e.r, Math.cos(a) * s, Math.sin(a) * s, rand(0.3, 0.55), rand(1.5, 2.8), PAL.paper, 1, 3);
+        }
+        break;
+      }
+      case "blister": // reads as volatile — mixed hot and cold, not just loud
+        for (let i = 0; i < 10; i++) {
+          const a = rand(TAU), s = rand(120, 320);
+          this.part(x, y, Math.cos(a) * s, Math.sin(a) * s, rand(0.3, 0.6), rand(1.5, 3), Math.random() < 0.5 ? PAL.cold : PAL.ember, 0, 2.5);
+        }
+        break;
+      case "seer": // a controlled collapse inward, not an outward burst
+        for (let i = 0; i < 8; i++) {
+          const a = rand(TAU), s = rand(140, 260);
+          this.part(x + Math.cos(a) * 30, y + Math.sin(a) * 30, -Math.cos(a) * s, -Math.sin(a) * s, rand(0.25, 0.4), rand(1.2, 2.2), PAL.cold, 0, 1.8);
+        }
+        break;
+      case "husk": // a heavy ground-shock collapse
+        this.ring(x, y, e.r * 0.3, e.r + 60, 0.4, PAL.coldRGB, 4);
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * TAU;
+          this.part(x + Math.cos(a) * e.r * 0.6, y + Math.sin(a) * e.r * 0.6, Math.cos(a) * 80, Math.sin(a) * 80, 0.4, 2.5, PAL.paper, 1, 2);
+        }
+        break;
+      case "twin": // the thread itself snapping apart
+        if (e.mate) {
+          const ta = Math.atan2(e.mate.y - y, e.mate.x - x);
+          this.streak(x - Math.cos(ta) * 20, y - Math.sin(ta) * 20, x + Math.cos(ta) * 40, y + Math.sin(ta) * 40, 5, 0.3, 1);
+          this.streak(x + Math.cos(ta) * 20, y + Math.sin(ta) * 20, x - Math.cos(ta) * 40, y - Math.sin(ta) * 40, 5, 0.3, 1);
+        }
+        break;
+      case "hunter": // a predatory rupture along its lunge line
+        for (let i = 0; i < 8; i++) {
+          const a = f + rand(-0.25, 0.25), s = rand(260, 440);
+          this.part(x, y, Math.cos(a) * s, Math.sin(a) * s, rand(0.25, 0.4), rand(1.5, 2.5), PAL.emberDeep, 0, 2.2);
+        }
+        break;
+      case "coordinator": // its three orbiting marks collapse into the center
+        for (let i = 0; i < 3; i++) {
+          const a = rand(TAU);
+          this.part(x + Math.cos(a) * (e.r + 10), y + Math.sin(a) * (e.r + 10), -Math.cos(a) * 60, -Math.sin(a) * 60, 0.45, 2.6, PAL.gold, 1, 1.6);
+        }
+        break;
+      case "shade": // the reflection simply stops being cast
+        for (let i = 0; i < 6; i++) {
+          const a = rand(TAU), s = rand(60, 150);
+          this.part(x, y, Math.cos(a) * s, Math.sin(a) * s, rand(0.35, 0.6), rand(1.2, 2.2), PAL.cold, 0, 1.6);
+        }
+        break;
+      case "trapper": // its satchel scatters, inert now
+        for (let i = 0; i < 6; i++) {
+          const a = rand(TAU), s = rand(80, 200);
+          this.part(x, y, Math.cos(a) * s, Math.sin(a) * s, rand(0.3, 0.5), rand(1.3, 2.3), PAL.paper, 1, 2.4);
+        }
+        break;
+      case "seep": // it collapses into the cold it was making
+        this.ring(x, y, e.r * 0.3, e.r + 30, 0.35, PAL.coldRGB, 3);
+        for (let i = 0; i < 6; i++) {
+          const a = rand(TAU), s = rand(60, 160);
+          this.part(x, y, Math.cos(a) * s, Math.sin(a) * s, rand(0.3, 0.55), rand(1.4, 2.6), PAL.cold, 0, 2);
+        }
+        break;
+      case "lurker": // a sharp reveal-burst — caught in the open, all at once
+        this.ring(x, y, e.r * 0.4, e.r + 40, 0.3, PAL.paperRGB, 3);
+        for (let i = 0; i < 7; i++) {
+          const a = rand(TAU), s = rand(160, 340);
+          this.part(x, y, Math.cos(a) * s, Math.sin(a) * s, rand(0.25, 0.45), rand(1.3, 2.4), PAL.paper, 0, 2.3);
+        }
+        break;
+    }
+  },
+
   /* Flame refund: embers that fly from the kill back into the lantern. */
   mote(x, y, n) {
     if (this.reduced) n = 1;
@@ -181,13 +330,13 @@ const FX = {
     if (this.zoom > 0) this.zoom = Math.max(0, this.zoom - rawDt * 0.22);
     if (this.pulse > 0) this.pulse = Math.max(0, this.pulse - rawDt * 4);
 
-    let arr = this.parts;
-    for (let i = arr.length - 1; i >= 0; i--) {
-      const q = arr[i];
+    const parts = this.parts;
+    for (let i = this.partN - 1; i >= 0; i--) {
+      const q = parts[i];
       q.life -= dt;
       if (q.life <= 0) {
-        arr[i] = arr[arr.length - 1];
-        arr.pop();
+        this.partN--;
+        if (i !== this.partN) { const tmp = parts[i]; parts[i] = parts[this.partN]; parts[this.partN] = tmp; }
         continue;
       }
       const k = Math.exp(-q.drag * dt);
@@ -197,6 +346,7 @@ const FX = {
       q.y += q.vy * dt;
       q.rot += dt * 6;
     }
+    let arr;
     const decay = (list, d) => {
       for (let i = list.length - 1; i >= 0; i--) {
         list[i].life -= d;
@@ -286,8 +436,9 @@ const FX = {
 
   /* Particles, rings, motes and text sit over the actors. */
   drawOver(ctx) {
-    // solid flecks first
-    for (const q of this.parts) {
+    // solid flecks first — only the live prefix of the pool, never the dead slack
+    for (let i = 0; i < this.partN; i++) {
+      const q = this.parts[i];
       if (q.type !== 1) continue;
       const k = q.life / q.max;
       ctx.globalAlpha = Math.min(1, k * 1.6);
@@ -303,7 +454,8 @@ const FX = {
     }
     ctx.globalCompositeOperation = "lighter";
     ctx.lineCap = "round";
-    for (const q of this.parts) {
+    for (let i = 0; i < this.partN; i++) {
+      const q = this.parts[i];
       if (q.type !== 0) continue;
       const k = q.life / q.max;
       ctx.globalAlpha = k;

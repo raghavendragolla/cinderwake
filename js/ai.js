@@ -48,11 +48,13 @@ const AI = {
     const px = player.x, py = player.y;
     const sectors = [0, 0, 0, 0, 0, 0, 0, 0]; // 8 sectors around player
 
-    // 1. Arena boundary constraints
-    if (px < m + 80) { sectors[3]++; sectors[4]++; sectors[5]++; }
-    if (px > W - m - 80) { sectors[7]++; sectors[0]++; sectors[1]++; }
-    if (py < m + 80) { sectors[1]++; sectors[2]++; sectors[3]++; }
-    if (py > H - m - 80) { sectors[5]++; sectors[6]++; sectors[7]++; }
+    // 1. Arena boundary constraints. Sectors are indexed by atan2 angle in
+    //    canvas coordinates, where y grows downward: 0 = right, 2 = down,
+    //    4 = left, 6 = up. A wall chokes the sectors that point INTO it.
+    if (px < m + 80) { sectors[3]++; sectors[4]++; sectors[5]++; }      // left: down-left..up-left
+    if (px > W - m - 80) { sectors[7]++; sectors[0]++; sectors[1]++; }  // right: up-right..down-right
+    if (py < m + 80) { sectors[5]++; sectors[6]++; sectors[7]++; }      // top: up-left, up, up-right
+    if (py > H - m - 80) { sectors[1]++; sectors[2]++; sectors[3]++; }  // bottom: down-right, down, down-left
 
     // 2. Active hazards
     for (const hz of hazards) {
@@ -174,18 +176,20 @@ const AI = {
       if (opt === b.lastAtk) scores[opt] -= 8;
     }
 
-    // Specific tactical nuances
+    // Specific tactical nuances. Option names must match what bossNext()
+    // is actually called with in bosses.js, or the scores silently never
+    // apply to anything — verified against the real option arrays there.
     if (b.type === "mire") {
-      // options: ["lurch", "spit", "quake"]
+      // real options: "lurch", "quake", "brood" (+"brood" only below 5 adds)
       if (d > 320) scores.lurch = (scores.lurch || 0) + 4; // close distance
       if (nearWall) scores.quake = (scores.quake || 0) - 4; // avoid trapping player against wall with ring
       if (lowFlame && scores.quake) scores.quake -= 3; // ring is punishing on 0 flame
-      if (d <= 220) scores.spit = (scores.spit || 0) + 3; // area denial at mid-range
+      if (d <= 220) scores.brood = (scores.brood || 0) + 3; // area denial at mid-range
     } else if (b.type === "loom") {
-      // options: ["fan", "shove", "darts"]
-      if (d > 350) scores.darts = (scores.darts || 0) + 4;
-      if (d < 190) scores.shove = (scores.shove || 0) + 5;
-      if (nearWall) scores.fan = (scores.fan || 0) - 3;
+      // real options: "fan", "spiral", "thread" (+"thread" only below 4 adds)
+      if (d > 350) scores.spiral = (scores.spiral || 0) + 4; // sweeps the whole arena at range
+      if (d < 190) scores.fan = (scores.fan || 0) + 5; // a direct cone hits hardest up close
+      if (nearWall) scores.thread = (scores.thread || 0) - 3; // less room for the thread to sweep
     } else if (b.type === "eclipse") {
       // options: ["beam", "nova", "lurch"]
       if (d > 340) scores.beam = (scores.beam || 0) + 4;

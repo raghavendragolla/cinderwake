@@ -3,6 +3,15 @@
    achievements, Dusk tiers, enemy facts and the wave table. */
 
 const CAMPAIGN_WAVES = 15;
+/** A name for each non-boss campaign wave, shown beside the number in the
+    banner — not flavor text pasted on top, but what that wave is actually
+    built around (its intro enemy, its archetype, or its guaranteed rule). */
+const WAVE_NAMES = {
+  1: "Awakening", 2: "First Hunt", 3: "The Wall", 4: "Volatile Ground",
+  5: "The Mire", 6: "The Eye", 7: "The Split", 8: "The Ring", 9: "Twin Flame",
+  10: "The Loom", 11: "The Hunt", 12: "The Phalanx", 13: "The Shadow", 14: "The Gauntlet",
+  15: "The Eclipse",
+};
 const DASH_SPEED = 1750; // arena units per second
 
 /* ------------------------------------------------------------ Lanterns */
@@ -25,10 +34,10 @@ const LANTERNS = {
   },
   pyre: {
     id: "pyre", name: "Pyre", tag: "The drawn bow",
-    desc: "Hold to charge, release to fly. A full charge crosses the arena and cuts twice as deep.",
+    desc: "Hold to charge, release to fly. A full charge crosses the arena and cuts deeper still.",
     hearts: 3, flame: 100, cost: 38, dist: 450, distMin: 150, width: 16, dmg: 1, speed: 245, regen: 10, refund: 21,
     charge: 0.6, price: 320,
-    facts: ["Hold to charge", "Full charge: double damage", "Slow while charging"],
+    facts: ["Hold to charge", "Full charge: +1 damage", "Slow while charging"],
     masteryCard: "heavy", masteryRGB: "255,90,50", masteryTitle: "The Bowmaster",
   },
   glint: {
@@ -107,11 +116,11 @@ const UPGRADES = [
   { id: "longwick", name: "Long wick", build: "util", rarity: "c", max: 3,
     desc: ["+25 maximum Flame.", "+50 maximum Flame.", "+75 maximum Flame."] },
   { id: "oil", name: "Lamp oil", build: "util", rarity: "c", max: 3,
-    desc: ["Flame regenerates 35% faster.", "Flame regenerates 70% faster.", "Flame regenerates 105% faster."] },
+    desc: ["Flame regenerates 35% faster. Move 10% faster when Flame is dry.", "Flame regenerates 70% faster. Move 15% faster when dry.", "Flame regenerates 105% faster. Move 20% faster when dry."] },
   { id: "fleet", name: "Fleetfoot", build: "util", rarity: "c", max: 3,
-    desc: ["Move 10% faster.", "Move 20% faster.", "Move 30% faster."] },
+    desc: ["Move 10% faster. Perfect Dashes grant +15% haste for 1s.", "Move 20% faster. Perfect Dashes grant +20% haste for 1s.", "Move 30% faster. Perfect Dashes grant +25% haste for 1s."] },
   { id: "reach", name: "Reach", build: "util", rarity: "c", max: 3,
-    desc: ["Dash 14% farther.", "Dash 28% farther.", "Dash 42% farther."] },
+    desc: ["Dash 14% farther. Perfect Dashes refund +4 bonus Flame.", "Dash 28% farther. Perfect Dashes refund +8 bonus Flame.", "Dash 42% farther. Perfect Dashes refund +12 bonus Flame."] },
   { id: "keen", name: "Wide edge", build: "util", rarity: "c", max: 2,
     desc: ["Your cut is 35% wider.", "Your cut is 70% wider."] },
   { id: "heart", name: "Heartwick", build: "util", rarity: "r", max: 2,
@@ -298,7 +307,15 @@ const ENEMY_INFO = {
   hunter: { name: "Hunter", cost: 3, score: 35, r: 14, hp: 2, speed: 95,
     tip: "It flanks patiently and strikes when you recover. Turn into its flank." },
   coordinator: { name: "Coordinator", cost: 4, score: 40, r: 16, hp: 2, speed: 72,
-    tip: "It guides ally angles from behind cover. Cut it down to break the enemy formation." },
+    tip: "Its pulse re-aims nearby allies — the gold-marked ones. Cut it down and the formation falls apart." },
+  lurker: { name: "Lurker", cost: 3, score: 35, r: 13, hp: 1, speed: 0,
+    tip: "It goes still and hard to see until you walk too close. Watch for the faint shape — cut it first, or give it a wide berth." },
+  seep: { name: "Seep", cost: 3, score: 30, r: 15, hp: 1, speed: 52,
+    tip: "It leaves cold ground behind it as it moves. Cut it quickly, or the floor fills in." },
+  trapper: { name: "Trapper", cost: 3, score: 35, r: 14, hp: 1, speed: 86,
+    tip: "It plants a device and backs off. Cut it before the mark finishes arming, or remember where it is." },
+  shade: { name: "Shade", cost: 4, score: 40, r: 13, hp: 1, speed: 0,
+    tip: "It walks your own path, a step behind. Change direction and it walks into empty air." },
   moon: { name: "Moon", cost: 0, score: 15, r: 13, hp: 1, speed: 0,
     tip: "The Eclipse cannot be cut while its moons circle. Clear them first." },
   mire: { name: "The Mire", boss: true, score: 500, r: 54, hp: 11,
@@ -313,8 +330,10 @@ const ENEMY_INFO = {
   ring: { name: "a shockwave", tip: "A dash carries you straight through a shockwave." },
   beam: { name: "the sweeping beam", tip: "Run ahead of the beam, or dash across it." },
   thread: { name: "the Twins' thread", tip: "The thread only burns between two living Twins. Cut either one." },
+  pool: { name: "cold ground", tip: "A Seep leaves this behind. It fades on its own — just don't stand in it." },
+  trap: { name: "a trap", tip: "A Trapper plants these. It flashes once it's armed — give it room, or cut the Trapper before it finishes." },
 };
-const BESTIARY_ORDER = ["blot", "dart", "bulwark", "blister", "seer", "clot", "husk", "twin", "mire", "loom", "eclipse"];
+const BESTIARY_ORDER = ["blot", "dart", "bulwark", "blister", "seer", "clot", "husk", "twin", "hunter", "coordinator", "lurker", "seep", "trapper", "shade", "mire", "loom", "eclipse"];
 
 /* --------------------------------------------------------- Elite mods */
 /* An elite is never just bigger numbers: it picks one of these and plays
@@ -338,67 +357,92 @@ const ELITE_MOD_ORDER = Object.keys(ELITE_MODS);
    difficulty envelope) to each variant, and only the composition — which
    enemies lead, and which named pairs show up — changes between runs.    */
 const WAVE_DEFS = {
-  1: { budget: 16, pool: { blot: 1 }, maxAlive: 8 },
-  2: { budget: 22, pool: { blot: 6, dart: 2 }, maxAlive: 8, intro: "dart", introCount: 1 },
+  1: {
+    variants: [
+      { budget: 16, pool: { blot: 1 }, maxAlive: 8 },
+      { budget: 16, pool: { blot: 1 }, maxAlive: 8, form: "ring" },
+    ],
+  },
+  2: {
+    intro: "dart", introCount: 1, variants: [
+      { budget: 22, pool: { blot: 6, dart: 2 }, maxAlive: 8 },
+      { budget: 22, pool: { blot: 5, dart: 2.5 }, maxAlive: 8, introCount: 2 },
+    ],
+  },
   3: {
-    intro: "bulwark", variants: [
-      { budget: 34, pool: { blot: 5, dart: 2, bulwark: 3 }, maxAlive: 12 },
-      { budget: 34, pool: { blot: 3, dart: 2, bulwark: 4 }, maxAlive: 12 }, // a wall of shields
+    // Wave 3: The Wall (Flanking Lesson). Exactly 1 Bulwark at a time, generous Blot recovery fuel.
+    intro: "bulwark", introCount: 1, variants: [
+      { budget: 30, pool: { blot: 7, dart: 1.5, bulwark: 1.5 }, maxAlive: 9 },
+      { budget: 30, pool: { blot: 6.5, dart: 2, bulwark: 1.8 }, maxAlive: 9 },
     ],
   },
   4: {
-    intro: "blister", variants: [
-      { budget: 42, pool: { blot: 5, dart: 2, bulwark: 2, blister: 3 }, maxAlive: 14 },
-      { budget: 42, pool: { blot: 3, dart: 1, bulwark: 3, blister: 3 }, maxAlive: 14 }, // Bulwark + Blister
+    // Wave 4: Volatile Ground (Space Management). Explosions + movement, no shield wall traps.
+    intro: "blister", introCount: 1, variants: [
+      { budget: 40, pool: { blot: 6, dart: 2, blister: 3.5 }, maxAlive: 12 },
+      { budget: 40, pool: { blot: 5.5, dart: 2.5, blister: 4 }, maxAlive: 12 },
     ],
   },
   5: { boss: "mire" },
   6: {
-    intro: "seer", variants: [
-      { budget: 52, pool: { blot: 4, dart: 2, bulwark: 2, blister: 2, seer: 3 }, maxAlive: 15 },
-      { budget: 52, pool: { blot: 3, dart: 1, bulwark: 3, blister: 1, seer: 3 }, maxAlive: 15 }, // Bulwark + Seer
+    // Wave 6: The Eye (Target Priority). Seer is visible priority; Bulwarks capped and isolated.
+    intro: "seer", introCount: 1, variants: [
+      { budget: 50, pool: { blot: 5.5, dart: 2, seer: 3.5, bulwark: 1 }, maxAlive: 11 },
+      { budget: 50, pool: { blot: 5, blister: 2, seer: 3.5, dart: 1.5 }, maxAlive: 11 },
     ],
   },
   7: {
-    intro: "clot", variants: [
-      { budget: 60, pool: { blot: 4, dart: 2, bulwark: 2, blister: 2, seer: 2, clot: 3 }, maxAlive: 16 },
-      { budget: 60, pool: { blot: 3, dart: 1, bulwark: 1, blister: 1, seer: 3, clot: 3 }, maxAlive: 16 }, // Clot + Seer
+    // Wave 7: The Split (Chain/Refund). Clots multiply into Clotlings for high-combo chains.
+    intro: "clot", introCount: 1, variants: [
+      { budget: 54, pool: { blot: 5, dart: 2, clot: 3.5, bulwark: 1 }, maxAlive: 11 },
+      { budget: 54, pool: { blot: 4.5, clot: 3.5, dart: 2.5, seer: 1.5 }, maxAlive: 11 },
     ],
   },
   8: {
-    intro: "husk", variants: [
-      { budget: 68, pool: { blot: 4, dart: 2, bulwark: 2, blister: 2, seer: 2, clot: 2, husk: 3 }, maxAlive: 17 },
-      { budget: 68, pool: { blot: 3, dart: 1, bulwark: 1, blister: 3, seer: 1, clot: 1, husk: 3 }, maxAlive: 17 }, // Husk + Blister
+    // Wave 8: The Ring (Area Control). Husk pulses with breathing windows, no Blister spam overlap.
+    intro: "husk", introCount: 1, variants: [
+      { budget: 64, pool: { blot: 5.5, dart: 2.5, husk: 3, clot: 1.5 }, maxAlive: 11 },
+      { budget: 64, pool: { blot: 5, seer: 2, husk: 3, dart: 2 }, maxAlive: 11 },
     ],
   },
   9: {
-    intro: "twin", variants: [
-      { budget: 76, pool: { blot: 4, dart: 2, bulwark: 2, blister: 2, seer: 2, clot: 2, husk: 2, twin: 2.5 }, maxAlive: 18 },
-      { budget: 76, pool: { blot: 3, dart: 2, hunter: 2, bulwark: 1, blister: 1, seer: 1, clot: 1, twin: 2.5 }, maxAlive: 18 }, // Hunter + Twin
+    // Wave 9: Twin Flame (Relationship Targeting). Linked pairs + supporting pressure.
+    intro: "twin", introCount: 1, variants: [
+      { budget: 72, pool: { blot: 5, dart: 2, twin: 3, hunter: 1.5 }, maxAlive: 12 },
+      { budget: 72, pool: { blot: 4.5, seer: 2, twin: 3, clot: 1.5, dart: 1.5 }, maxAlive: 12 },
     ],
   },
   10: { boss: "loom" },
   11: {
-    mod: true, variants: [
-      { budget: 88, pool: { blot: 4, dart: 2, hunter: 2, seer: 2, clot: 2 }, maxAlive: 16 }, // The Skirmish: fast lunges & sightlines
-      { budget: 88, pool: { blot: 5, dart: 2, seer: 2, blister: 2 }, maxAlive: 16 }, // Swarm with sniper support
+    // Wave 11: The Hunt (Adaptive Pressure). Mobile threats with distinct identities & recovery targets.
+    mod: true, intro: "hunter", introCount: 1, variants: [
+      { budget: 76, pool: { blot: 6, dart: 1.8, hunter: 2.2, seer: 1.2 }, maxAlive: 11 },
+      { budget: 76, pool: { blot: 6, shade: 2.2, dart: 1.8, seer: 1.2 }, maxAlive: 11, intro: "shade" },
+      { budget: 76, pool: { blot: 5.5, seep: 2.2, hunter: 1.8, dart: 1.5 }, maxAlive: 11, intro: "seep" },
     ],
   },
   12: {
-    mod: true, variants: [
-      { budget: 96, pool: { blot: 3.5, bulwark: 2.5, husk: 2, blister: 2, coordinator: 1.5 }, maxAlive: 17 }, // The Phalanx with coordinator
-      { budget: 96, pool: { blot: 4, bulwark: 3.5, dart: 2.5, clot: 2 }, maxAlive: 17 }, // Shield wall with dart rush
+    // Wave 12: The Phalanx (Formation Breaking). Coordinator commands, max 2 Bulwarks with flank paths.
+    mod: true, intro: "coordinator", introCount: 1, variants: [
+      { budget: 84, pool: { blot: 6, coordinator: 2.2, bulwark: 1.6, dart: 1.8 }, maxAlive: 11 },
+      { budget: 84, pool: { blot: 5.5, coordinator: 2, seep: 1.8, dart: 2, clot: 1.5 }, maxAlive: 11 },
     ],
   },
   13: {
+    // Wave 13: The Shadow (Movement Prediction). Stalking echoes, timing & spacing over raw numbers.
     mod: true, variants: [
-      { budget: 104, pool: { blot: 3.5, twin: 2.5, seer: 2, dart: 2 }, maxAlive: 18 }, // The Threads: weaving threads and snipers
-      { budget: 104, pool: { blot: 3.5, husk: 2, bulwark: 2, seer: 2, clot: 2 }, maxAlive: 18 }, // The Bastion: heavy ground control
+      { budget: 96, pool: { blot: 4.5, shade: 2.5, twin: 2, dart: 2 }, maxAlive: 13 },
+      { budget: 96, pool: { blot: 4.5, lurker: 2.5, seer: 2, dart: 2 }, maxAlive: 13, intro: "lurker" },
+      { budget: 96, pool: { blot: 4, husk: 2, shade: 2, dart: 2 }, maxAlive: 13 },
     ],
   },
   14: {
-    budget: 114, pool: { blot: 3, dart: 1.5, hunter: 1.5, coordinator: 1.5, bulwark: 1.5, seer: 1.5, clot: 1.5, husk: 1.5, twin: 1.5 },
-    maxAlive: 19, mod: true,
+    // Wave 14: The Gauntlet (Mastery Combination). Sequenced challenges combining all mechanics.
+    mod: true, variants: [
+      { budget: 104, pool: { blot: 4, trapper: 2.5, hunter: 2, seer: 1.5, dart: 1.5 }, maxAlive: 13, intro: "trapper" },
+      { budget: 104, pool: { blot: 4, coordinator: 2, bulwark: 1.5, hunter: 2, dart: 1.5 }, maxAlive: 13 },
+      { budget: 104, pool: { blot: 4, twin: 2, seer: 2, clot: 2, dart: 1.5 }, maxAlive: 13 },
+    ],
   },
   15: { boss: "eclipse" },
 };
@@ -411,15 +455,20 @@ function waveDef(n) {
   const raw = WAVE_DEFS[n];
   if (raw) {
     if (!raw.variants) return raw;
-    const v = pick(raw.variants);
-    return raw.intro ? Object.assign({ intro: raw.intro, introCount: raw.introCount }, v) : v;
+    // every wrapper-level field (mod, intro, introCount, ...) belongs to the
+    // wave regardless of which variant is picked — e.g. `mod: true` on waves
+    // 11-14 is meant to guarantee a modifier every time, not leave it to the
+    // ~40% random chance that applies when the flag goes missing.
+    const wrapper = {};
+    for (const k in raw) if (k !== "variants") wrapper[k] = raw[k];
+    return Object.assign(wrapper, pick(raw.variants));
   }
   if (n % 5 === 0) return { boss: BOSS_CYCLE[(n / 5 - 1) % 3] };
   const k = n - CAMPAIGN_WAVES;
   return {
     budget: 124 + k * 10,
     pool: { blot: 3.5, dart: 1.5, hunter: 1.5, coordinator: 1.2, bulwark: 1.5, blister: 1.5, seer: 1.5, clot: 1.5, husk: 1.5, twin: 1.5 },
-    maxAlive: Math.min(34, 22 + Math.floor(k * 0.7)),
+    maxAlive: Math.min(20, 15 + Math.floor(k * 0.4)),
     mod: true,
   };
 }

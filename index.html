@@ -15,27 +15,35 @@
 
   <!-- In-run heads-up display -->
   <div id="hud" class="hud" hidden>
-    <div class="hud-left">
-      <div id="hudHearts" class="hearts" role="img" aria-label="Hearts"></div>
-      <div class="flame" role="img" aria-label="Flame">
-        <div id="hudFlame" class="flame-fill"></div>
-        <div id="hudFlameTicks" class="flame-ticks"></div>
+    <header class="hud-header">
+      <div class="hud-left">
+        <div class="hud-vitals">
+          <div id="hudHearts" class="hearts" role="img" aria-label="Hearts"></div>
+          <div class="flame" role="img" aria-label="Flame">
+            <div id="hudFlame" class="flame-fill"></div>
+            <div id="hudFlameTicks" class="flame-ticks"></div>
+          </div>
+        </div>
+        <div id="hudBuild" class="build"></div>
       </div>
-      <div id="hudBuild" class="build"></div>
-    </div>
-    <div class="hud-mid">
-      <div id="hudWave" class="wave"></div>
-      <div id="hudLeft" class="left"></div>
-      <div id="hudBoss" class="boss" hidden>
-        <span id="hudBossName"></span>
-        <div class="boss-bar"><i id="hudBossFill"></i></div>
+      <div class="hud-mid">
+        <div id="hudWave" class="wave"></div>
+        <div id="hudLeft" class="left"></div>
+        <div id="hudMutation" class="hud-mutation" hidden></div>
+        <div id="hudBoss" class="boss" hidden>
+          <span id="hudBossName"></span>
+          <div class="boss-bar"><i id="hudBossFill"></i></div>
+        </div>
       </div>
-    </div>
-    <div class="hud-right">
-      <div id="hudScore" class="score">0</div>
-      <div id="hudCombo" class="combo"><span id="hudComboN"></span><div class="combo-bar"><i id="hudComboFill"></i></div></div>
-    </div>
-    <button id="btnPause" class="pause-btn" type="button" aria-label="Pause"></button>
+      <div class="hud-right">
+        <div class="hud-score-col">
+          <span class="hud-score-label">SCORE</span>
+          <div id="hudScore" class="score">0</div>
+          <div id="hudCombo" class="combo"><span id="hudComboN"></span><div class="combo-bar"><i id="hudComboFill"></i></div></div>
+        </div>
+        <button id="btnPause" class="pause-btn" type="button" aria-label="Pause"></button>
+      </div>
+    </header>
     <div id="banner" class="banner" aria-live="polite"><div id="bannerTitle" class="banner-title"></div><div id="bannerSub" class="banner-sub"></div></div>
     <div id="hint" class="hint" aria-live="polite"></div>
   </div>
@@ -50,14 +58,18 @@
           <i class="mark-cut" aria-hidden="true"></i>
         </h1>
         <p class="main-line">Your movement is your weapon.</p>
+        <p id="mainWelcome" class="main-welcome"></p>
         <nav class="menu" aria-label="Main menu">
           <button type="button" class="menu-item menu-primary" data-act="play" data-autofocus>Begin a run</button>
+          <button type="button" class="menu-item" data-act="daily">Daily challenge <span id="dailyNote" class="menu-note"></span></button>
+          <button type="button" class="menu-item" data-act="practice">Practice arena</button>
           <button type="button" class="menu-item" data-act="continue" id="btnContinue" hidden>Continue</button>
           <button type="button" class="menu-item" data-act="hearth">The Hearth <span id="hearthNote" class="menu-note"></span></button>
           <button type="button" class="menu-item" data-go="how">How to play</button>
           <button type="button" class="menu-item" data-go="stats">Statistics</button>
           <button type="button" class="menu-item" data-go="ach">Achievements <span id="achNote" class="menu-note"></span></button>
           <button type="button" class="menu-item" data-go="settings">Settings</button>
+          <button type="button" class="menu-item" data-go="cloud">Cloud Save <span id="cloudNote" class="menu-note">Guest</span></button>
           <button type="button" class="menu-item" data-go="credits">About</button>
         </nav>
       </div>
@@ -163,6 +175,63 @@
       </div>
     </section>
 
+    <!-- Cloud Save & Account Management -->
+    <section id="scr-cloud" class="screen" hidden>
+      <div class="panel panel-narrow">
+        <header class="panel-head"><h2>Cloud Save</h2><button type="button" class="btn-back" data-go="main" data-autofocus>Back</button></header>
+        <div class="cloud-panel">
+          <div class="cloud-status-card">
+            <div class="cloud-status-head">
+              <span class="cloud-badge" id="cloudBadge">Guest</span>
+              <span class="cloud-user" id="cloudUserDisplay">Local save only</span>
+            </div>
+            <p id="cloudStatusDesc" class="cloud-desc">Sign in with an account to carry your progression across devices.</p>
+          </div>
+
+          <!-- Authenticated Account Controls -->
+          <div id="cloudAuthedControls" hidden>
+            <div class="row-center">
+              <button type="button" id="btnCloudSync" class="btn btn-primary">Sync Now</button>
+              <button type="button" id="btnCloudLogout" class="btn">Logout</button>
+            </div>
+            <p id="cloudSyncNote" class="note"></p>
+          </div>
+
+          <!-- Auth Forms (Login / Create Account) -->
+          <div id="cloudAuthForm">
+            <div class="cloud-fields">
+              <label class="cloud-label"><span>Username</span><input type="text" id="cloudUsername" placeholder="username (3–32 chars)" autocomplete="username" maxlength="32"></label>
+              <label class="cloud-label"><span>Password</span><input type="password" id="cloudPassword" placeholder="at least 8 characters" autocomplete="current-password"></label>
+            </div>
+            <div class="row-center">
+              <button type="button" id="btnCloudLogin" class="btn btn-primary">Login</button>
+              <button type="button" id="btnCloudRegister" class="btn">Create Account</button>
+            </div>
+            <p id="cloudAuthNote" class="note"></p>
+          </div>
+
+          <div class="row-center" style="margin-top:6px;">
+            <button type="button" class="btn btn-small" data-go="main">Continue as Guest</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Cloud Conflict Resolution Modal -->
+    <section id="scr-conflict" class="screen screen-dim" hidden>
+      <div class="panel panel-narrow center">
+        <h2 class="big">Local progress found</h2>
+        <p class="lede">Both your local browser and cloud account have saved progression. Choose how to synchronize:</p>
+        <div id="conflictComparison" class="conflict-comparison"></div>
+        <div class="row-center">
+          <button type="button" id="btnConflictLocal" class="btn">Use Local Progress</button>
+          <button type="button" id="btnConflictCloud" class="btn">Use Cloud Progress</button>
+          <button type="button" id="btnConflictMerge" class="btn btn-primary">Merge (Keep Both)</button>
+        </div>
+        <p class="note">Merging combines unlocked lanterns and achievements without duplicating Cinders or score.</p>
+      </div>
+    </section>
+
     <section id="scr-credits" class="screen" hidden>
       <div class="panel panel-narrow">
         <header class="panel-head"><h2>About</h2><button type="button" class="btn-back" data-go="main" data-autofocus>Back</button></header>
@@ -213,6 +282,18 @@
       </div>
     </section>
 
+    <section id="scr-checkpoint" class="screen screen-dim" hidden>
+      <div class="panel over checkpoint-panel">
+        <h2 id="cpTitle" class="big">Wave Checkpoint</h2>
+        <p id="cpWhy" class="over-why"></p>
+        <dl id="cpStats" class="over-stats"></dl>
+        <div class="row-center cp-actions">
+          <button type="button" id="btnRetryWave" class="btn btn-primary" data-act="retry-wave" data-autofocus>Retry Wave</button>
+          <button type="button" id="btnEndRun" class="btn" data-act="end-run">End Run</button>
+        </div>
+      </div>
+    </section>
+
     <section id="scr-over" class="screen screen-dim" hidden>
       <div class="panel over">
         <h2 id="overTitle" class="big"></h2>
@@ -221,10 +302,12 @@
         <dl id="overStats" class="over-stats"></dl>
         <div class="over-cinders"><span id="overCinders"></span><span id="overCindersNote" class="dim"></span></div>
         <div id="overAch" class="over-ach"></div>
+        <div id="overPermanent" class="over-permanent"></div>
         <div id="overAnalysis" class="over-analysis"></div>
         <div id="overGoal" class="goal"></div>
         <div class="row-center">
-          <button type="button" class="btn btn-primary" data-act="again" data-autofocus>Play again</button>
+          <button type="button" class="btn btn-primary" data-act="again" data-autofocus>Try again</button>
+          <button type="button" class="btn" data-act="same-seed">Replay seed</button>
           <button type="button" class="btn" data-act="hearth">The Hearth</button>
           <button type="button" class="btn" data-act="menu">Menu</button>
         </div>
@@ -237,9 +320,11 @@
 <noscript><p style="color:#e9e0cc;padding:2rem;font-family:Georgia,serif">Cinderwake needs JavaScript to run.</p></noscript>
 
 <!-- Plain scripts, loaded in order, so the game also runs straight from the file system. -->
+<script src="js/config.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/data.js"></script>
 <script src="js/save.js"></script>
+<script src="js/cloud.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/input.js"></script>
 <script src="js/fx.js"></script>

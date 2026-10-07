@@ -3,6 +3,8 @@
    shapes with a pale edge; warm light is the player's, cold light is
    danger. The static arena floor is rendered once and reused.          */
 
+const _mousePt = { x: 0, y: 0 };
+
 const Render = {
   canvas: null, ctx: null, bg: null, lightK: 0, menuT: 0, streakT: 2,
 
@@ -17,14 +19,16 @@ const Render = {
   resize() {
     const cssW = Math.max(200, window.innerWidth), cssH = Math.max(200, window.innerHeight);
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const aspect = clamp(cssW / cssH, 0.5, 2.3);
-    const area = Math.min(cssW, cssH) < 560 ? 620000 : 900000;
+    const topH = 72;
+    const playH = Math.max(160, cssH - topH);
+    const aspect = clamp(cssW / playH, 0.5, 2.3);
+    const area = Math.min(cssW, playH) < 560 ? 620000 : 900000;
     const W = Math.round(Math.sqrt(area * aspect)), H = Math.round(W / aspect);
-    const scale = Math.min(cssW / W, cssH / H);
+    const scale = Math.min(cssW / W, playH / H);
     View.W = W; View.H = H; View.scale = scale; View.dpr = dpr;
     View.cssW = cssW; View.cssH = cssH;
     View.ox = (cssW - W * scale) / 2;
-    View.oy = (cssH - H * scale) / 2;
+    View.oy = topH + (playH - H * scale) / 2;
     this.canvas.width = Math.round(cssW * dpr);
     this.canvas.height = Math.round(cssH * dpr);
     this.canvas.style.width = cssW + "px";
@@ -97,6 +101,9 @@ const Render = {
   draw(rawDt) {
     const ctx = this.ctx, cv = this.canvas, W = G.W, H = G.H;
     if (!ctx) return;
+    if (cv && (G.state !== "play" || !G.player || G.player.dash) && cv.style.cursor !== "crosshair") {
+      cv.style.cursor = "crosshair";
+    }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
@@ -159,6 +166,10 @@ const Render = {
   drawWorld(ctx) {
     const p = G.player, W = G.W, H = G.H, t = G.realT;
 
+    // ambient embers drifting through the dark — pure atmosphere, drawn
+    // under everything so it never competes with gameplay-critical reads
+    Atmosphere.draw(ctx);
+
     // Thin World: the walls visibly close in as the wave runs long
     if (G.wave && G.wave.shrink > 1) {
       const m = G.wave.shrink;
@@ -214,6 +225,7 @@ const Render = {
     }
 
     this.drawHazards(ctx, t);
+    if (G.shrine && !G.shrine.claimed) this.drawShrine(ctx, t);
     for (const e of G.enemies) if (!e.dead) this.drawTelegraph(ctx, e, t);
 
     // where an echo is about to strike
@@ -268,8 +280,9 @@ const Render = {
       }
     }
 
-    if (p.alive) this.drawPlayer(ctx, p, t);
     FX.drawOver(ctx);
+    if (p.alive) this.drawPlayer(ctx, p, t);
+    if (G.lastEmber) this.drawLastEmber(ctx, p, t);
 
     // the dark beyond the lantern's reach
     const gloom = G.gloomBoss || (G.wave && G.wave.mod && G.wave.mod.gloom && !G.wave.cleared);
@@ -280,6 +293,93 @@ const Render = {
     gr.addColorStop(1, `rgba(7,8,12,${dark})`);
     ctx.fillStyle = gr;
     ctx.fillRect(-60, -60, W + 120, H + 120);
+  },
+
+  drawLastEmber(ctx, p, t) {
+    if (!G.lastEmber || !p.alive) return;
+    const le = G.lastEmber, W = G.W, H = G.H;
+    const prog = clamp(le.t / le.maxT, 0, 1);
+
+    // Dim the surrounding world without hiding gameplay essentials
+    ctx.fillStyle = "rgba(6, 7, 12, 0.45)";
+    ctx.fillRect(0, 0, W, H);
+
+    const tgt = le.target;
+    if (tgt && !tgt.dead) {
+      // Dotted golden ray from player to target
+      ctx.strokeStyle = `rgba(${PAL.goldRGB},${0.4 + 0.35 * Math.sin(t * 14)})`;
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([6, 6]);
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(tgt.x, tgt.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Target Ember Beacon
+      const br = tgt.r + 14 + 4 * Math.sin(t * 12);
+      ctx.strokeStyle = PAL.gold;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(tgt.x, tgt.y, br, 0, TAU);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(${PAL.goldRGB},0.22)`;
+      ctx.beginPath();
+      ctx.arc(tgt.x, tgt.y, br, 0, TAU);
+      ctx.fill();
+
+      // Orbiting ember chevrons
+      for (let k = 0; k < 4; k++) {
+        const ang = t * 3.5 + (k * Math.PI) / 2;
+        const cx = tgt.x + Math.cos(ang) * (br + 6), cy = tgt.y + Math.sin(ang) * (br + 6);
+        ctx.beginPath();
+        ctx.arc(cx, cy, 3.5, 0, TAU);
+        ctx.fillStyle = PAL.ember;
+        ctx.fill();
+      }
+    }
+
+    // Sleek timer ring around player
+    ctx.strokeStyle = `rgba(${PAL.paperRGB},0.25)`;
+    ctx.lineWidth = 3.5;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 34, 0, TAU);
+    ctx.stroke();
+
+    ctx.strokeStyle = PAL.gold;
+    ctx.lineWidth = 3.5;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 34, -Math.PI / 2, -Math.PI / 2 + prog * TAU);
+    ctx.stroke();
+  },
+
+  /** Two labeled motes of a Cinder Shrine — what each grants is shown
+      before you choose, never hidden. Neither can ever hurt you.        */
+  drawShrine(ctx, t) {
+    const mote = (m) => {
+      const pulse = 0.6 + 0.4 * Math.sin(t * 3.2 + m.x * 0.01);
+      ctx.globalCompositeOperation = "lighter";
+      drawGlow(ctx, Glow.paper, m.x, m.y, 30 + pulse * 10, 0.5 * pulse);
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = PAL.gold;
+      ctx.strokeStyle = PAL.paper;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, 9 + pulse * 2, 0, TAU);
+      ctx.fill();
+      ctx.stroke();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = `italic 600 14px "Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif`;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(16,18,25,0.85)";
+      ctx.strokeText(m.label, m.x, m.y - 24);
+      ctx.fillStyle = PAL.gold;
+      ctx.fillText(m.label, m.x, m.y - 24);
+    };
+    mote(G.shrine.a);
+    mote(G.shrine.b);
   },
 
   drawHazards(ctx, t) {
@@ -334,6 +434,38 @@ const Render = {
         ctx.setLineDash([5, 9]);
         ctx.beginPath(); ctx.moveTo(hz.x, 0); ctx.lineTo(hz.x, G.H); ctx.stroke();
         ctx.setLineDash([]);
+      } else if (hz.type === "trap") {
+        if (!hz.armed) {
+          const k = clamp(1 - hz.armT / hz.maxArm, 0, 1);
+          ctx.strokeStyle = `rgba(${PAL.coldRGB},${0.25 + 0.5 * k})`;
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([5, 6]);
+          ctx.beginPath(); ctx.arc(hz.x, hz.y, hz.r * (0.3 + 0.7 * k), 0, TAU); ctx.stroke();
+          ctx.setLineDash([]);
+        } else {
+          const pulse = 0.5 + 0.5 * Math.sin(t * 7);
+          ctx.strokeStyle = `rgba(${PAL.coldRGB},${0.7 + 0.25 * pulse})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(hz.x, hz.y, hz.r, 0, TAU); ctx.stroke();
+          ctx.strokeStyle = `rgba(210,228,255,${0.6 + 0.3 * pulse})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(hz.x - 7, hz.y - 7); ctx.lineTo(hz.x + 7, hz.y + 7);
+          ctx.moveTo(hz.x + 7, hz.y - 7); ctx.lineTo(hz.x - 7, hz.y + 7);
+          ctx.stroke();
+        }
+      } else if (hz.type === "pool") {
+        const grow = clamp(1 - hz.life / hz.max, 0, 1); // eases in just after it's dropped
+        const fade = clamp(hz.life / 0.6, 0, 1); // flickers out in its last moment, as a warning it's clearing
+        const rr = hz.r * (0.5 + 0.5 * easeOut(Math.min(1, grow * 5)));
+        const pulse = 0.5 + 0.5 * Math.sin(t * 5 + hz.x);
+        ctx.fillStyle = `rgba(${PAL.coldRGB},${(0.1 + 0.05 * pulse) * fade})`;
+        ctx.beginPath(); ctx.arc(hz.x, hz.y, rr, 0, TAU); ctx.fill();
+        ctx.strokeStyle = `rgba(${PAL.coldRGB},${(0.55 + 0.2 * pulse) * fade})`;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 6]);
+        ctx.beginPath(); ctx.arc(hz.x, hz.y, rr, 0, TAU); ctx.stroke();
+        ctx.setLineDash([]);
       }
     }
   },
@@ -370,6 +502,12 @@ const Render = {
         break;
       case "hunter":
         if (e.state === 1) lane(e.lock, 520 * 0.35, e.r * 0.8, 1 - e.t / 0.55);
+        break;
+      case "lurker":
+        if (e.state === 1) lane(e.lock, LURK_LUNGE_SPEED * LURK_LUNGE_TIME, e.r * 0.85, 1 - e.t / 0.42);
+        break;
+      case "trapper":
+        if (e.state === 1) disc(46, 1 - e.t / 0.6);
         break;
       case "coordinator":
         if (e.pulseT < 0.6) disc(e.r + 36, 1 - e.pulseT / 0.6);
@@ -547,9 +685,15 @@ const Render = {
         ctx.strokeStyle = PAL.soot;
         ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.arc(x, y, r + 7, f - e.arc, f + e.arc); ctx.stroke();
-        // the open back: a small warm notch
-        ctx.fillStyle = PAL.ember;
-        ctx.beginPath(); ctx.arc(x - Math.cos(f) * (r - 3), y - Math.sin(f) * (r - 3), 2.6, 0, TAU); ctx.fill();
+        // the open back: a small warm notch; when turnLock > 0 (staggered or committed stride), pulse brightly to signal the opening!
+        const open = e.turnLock > 0;
+        ctx.fillStyle = open ? PAL.gold : PAL.ember;
+        ctx.beginPath(); ctx.arc(x - Math.cos(f) * (r - 3), y - Math.sin(f) * (r - 3), open ? 4.2 : 2.6, 0, TAU); ctx.fill();
+        if (open) {
+          ctx.strokeStyle = `rgba(${PAL.goldRGB},0.75)`;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
         break;
       }
       case "blister": {
@@ -644,6 +788,67 @@ const Render = {
         eye(r * 0.25, 2.8);
         break;
       }
+      case "shade": {
+        // a pale, cold diamond — an echo of the player's own shape, not ink
+        const prevAlpha = ctx.globalAlpha;
+        ctx.globalAlpha = prevAlpha * 0.7;
+        ctx.fillStyle = `rgba(${PAL.coldRGB},0.5)`;
+        ctx.strokeStyle = `rgba(210,228,255,0.85)`;
+        poly(4, r * 1.15, f + Math.PI / 4, 0, 0);
+        ctx.globalAlpha = prevAlpha;
+        break;
+      }
+      case "trapper": {
+        // low and wedge-shaped, hunched over whatever it's about to set down
+        poly(5, r, f, 0, 0);
+        ctx.fillStyle = flash ? PAL.body : (e.state === 1 ? PAL.cold : PAL.paper);
+        ctx.beginPath(); ctx.arc(x - Math.cos(f) * r * 0.3, y - Math.sin(f) * r * 0.3, e.state === 1 ? 3.2 : 2.4, 0, TAU); ctx.fill();
+        break;
+      }
+      case "seep": {
+        // a low, oozing blob, trailing a few drips toward where it's been
+        poly(7, r, e.wob + t * 0.4, 2.5, 0.16);
+        ctx.strokeStyle = `rgba(${PAL.coldRGB},0.6)`;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.arc(x, y, r + 4, 0, TAU); ctx.stroke();
+        for (let i = 0; i < 3; i++) {
+          const a = f + Math.PI + (i - 1) * 0.5, dd = r * (1.3 + i * 0.35);
+          ctx.fillStyle = `rgba(${PAL.coldRGB},${0.5 - i * 0.12})`;
+          ctx.beginPath(); ctx.arc(x + Math.cos(a) * dd, y + Math.sin(a) * dd, 2.4 - i * 0.5, 0, TAU); ctx.fill();
+        }
+        break;
+      }
+      case "lurker": {
+        const reveal = 1 - (e.cloak === undefined ? 1 : e.cloak);
+        ctx.globalAlpha = alpha * (0.1 + 0.9 * reveal);
+        if (reveal < 0.5) {
+          // dormant: a low, flat, closed shape — easy to miss, never fully hidden
+          ctx.beginPath();
+          ctx.ellipse(x, y, r * 1.1, r * 0.55, e.wob * 0.3, 0, TAU);
+          ctx.fill();
+          ctx.stroke();
+        } else {
+          // awake: a sharp, raised claw aimed at its lock
+          const jx = e.state === 2 ? rand(-1.5, 1.5) : 0, jy = e.state === 2 ? rand(-1.5, 1.5) : 0;
+          ctx.beginPath();
+          for (let i = 0; i < 5; i++) {
+            const a = f + (i - 2) * 0.55;
+            const rr = i === 2 ? r * 1.6 : r * 0.9;
+            const px = x + jx + Math.cos(a) * rr, py = y + jy + Math.sin(a) * rr;
+            if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+          eye(r * 0.5, 2.6);
+          if (e.state === 3) { // spent: an open ring says "cut me now"
+            ctx.strokeStyle = `rgba(${PAL.paperRGB},0.45)`;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.arc(x, y, r + 7, t * 4, t * 4 + 4.2); ctx.stroke();
+          }
+        }
+        break;
+      }
       case "moon": {
         ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill(); ctx.stroke();
         ctx.fillStyle = flash ? PAL.body : `rgba(${PAL.paperRGB},0.8)`;
@@ -667,6 +872,15 @@ const Render = {
         ctx.fillStyle = PAL.paper;
         for (let i = 0; i < e.hp; i++) { ctx.beginPath(); ctx.arc(x + (i - (e.hp - 1) / 2) * 7, y - r - 9, 2, 0, TAU); ctx.fill(); }
       }
+    }
+    if (e.markT > 0) { // the Coordinator's pulse: which allies it is steering
+      const k = Math.min(1, e.markT * 2);
+      ctx.strokeStyle = `rgba(${PAL.goldRGB},${0.55 * k})`;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.lineDashOffset = -t * 22;
+      ctx.beginPath(); ctx.arc(x, y, r + 9, 0, TAU); ctx.stroke();
+      ctx.setLineDash([]);
     }
     if (e.stun > 0.05 && !e.boss) {
       ctx.strokeStyle = `rgba(${PAL.paperRGB},0.35)`;
@@ -793,30 +1007,44 @@ const Render = {
     const can = p.flame + 0.001 >= cost;
     const fr = clamp(p.flame / S.maxFlame, 0, 1);
 
-    // aim guide: where this dash would end
+    // aim guide: where this dash would end — the same length rule the
+    // dash itself uses, so the guide can never promise a longer cut
     if (Save.data.settings.aimGuide && !p.dash && G.state === "play") {
       let d = S.dashDist;
       if (L.charge) d = lerp(L.distMin, S.dashDist, p.charging ? p.charge : 0);
-      if (L.blink) {
-        if (Input.touch) d *= p.aimAuto ? clamp(p.aimDist / S.dashDist, 0.25, 1) : Math.max(0.3, p.aimPow);
-        else if (Input.mouseActive()) d = Math.min(d, Math.max(40, p.aimDist));
-      }
+      else if (L.blink) d = blinkLengthFor(p);
+      else d = dashLengthFor(p);
       const ex = clamp(x + Math.cos(p.aim) * d, 14, G.W - 14), ey = clamp(y + Math.sin(p.aim) * d, 14, G.H - 14);
-      const a = can ? 0.3 : 0.1;
-      ctx.strokeStyle = `rgba(${PAL.goldRGB},${a})`;
-      ctx.lineWidth = L.blink ? 1 : 1.5 + (p.charging ? p.charge * 3 : 0);
-      ctx.setLineDash([2, 8]);
+      Input.mouseArena(_mousePt);
+      const dToHandle = dist(_mousePt.x, _mousePt.y, ex, ey);
+      const isDragging = (Input.held && (Input.mouseDash || Input.mouseActive())) || p.charging;
+      const isHovered = Input.mouseActive() && !Input.touch && dToHandle < 26;
+      if (this.canvas) {
+        this.canvas.style.cursor = isDragging ? "grabbing" : (isHovered ? "grab" : "crosshair");
+      }
+      const guideColor = can ? PAL.goldRGB : "220,110,60";
+      const a = can ? (isDragging ? 0.72 : (isHovered ? 0.55 : 0.32)) : 0.22;
+      ctx.strokeStyle = `rgba(${guideColor},${a})`;
+      ctx.lineWidth = L.blink ? (isDragging ? 2.0 : 1.2) : (isDragging ? 2.6 : (isHovered ? 2.0 : 1.5)) + (p.charging ? p.charge * 3 : 0);
+      ctx.setLineDash(isDragging ? [5, 5] : (isHovered ? [4, 6] : [3, 7]));
       ctx.lineCap = "round";
       ctx.beginPath();
       ctx.moveTo(x + Math.cos(p.aim) * 30, y + Math.sin(p.aim) * 30);
       ctx.lineTo(ex, ey);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.strokeStyle = `rgba(${PAL.goldRGB},${a + 0.15})`;
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = `rgba(${guideColor},${a + 0.25})`;
+      ctx.lineWidth = isDragging ? 2.4 : (isHovered ? 2.0 : 1.5);
+      const ringR = L.blink ? S.burstR : (isDragging ? 8.5 : (isHovered ? 8 : 6));
       ctx.beginPath();
-      ctx.arc(ex, ey, L.blink ? S.burstR : 6, 0, TAU);
+      ctx.arc(ex, ey, ringR, 0, TAU);
       ctx.stroke();
+      if (isDragging || isHovered) {
+        ctx.fillStyle = `rgba(${guideColor},${isDragging ? 0.32 : 0.16})`;
+        ctx.beginPath();
+        ctx.arc(ex, ey, ringR, 0, TAU);
+        ctx.fill();
+      }
     }
 
     // warm light
@@ -861,7 +1089,7 @@ const Render = {
     }
 
     // the lantern: a small flame-diamond that leans into its aim
-    const blink = p.inv > 0.15 && !p.dash && p.hurtT <= 0 && Math.sin(t * 40) > 0.2 && G.player.hearts > 0 && G.wave && !G.wave.cleared;
+    const blink = ((p.inv > 0.15 && !p.dash && p.hurtT <= 0 && Math.sin(t * 40) > 0.2 && G.player.hearts > 0 && G.wave && !G.wave.cleared) || (G.lastEmber && Math.sin(t * 36) > 0.1));
     ctx.globalAlpha = blink ? 0.45 : 1;
     ctx.save();
     ctx.translate(x, y);

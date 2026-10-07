@@ -147,6 +147,14 @@ defSfx("dashFail", 0.12, (A) => {
 defSfx("whiff", 0.05, (A) => {
   A.noise({ type: "bandpass", f: 1400, f2: 500, q: 0.7, dur: 0.14, vol: 0.05, delay: 0.05 });
 });
+defSfx("nearMiss", 0.08, (A) => {
+  A.tone({ type: "sine", f: 1480, f2: 2400, dur: 0.08, vol: 0.11 });
+  A.noise({ type: "highpass", f: 4500, dur: 0.05, vol: 0.07 });
+});
+defSfx("clutchDash", 0.14, (A) => {
+  A.tone({ type: "triangle", f: 120, f2: 260, dur: 0.22, vol: 0.18 });
+  A.noise({ type: "lowpass", f: 800, f2: 180, dur: 0.2, vol: 0.14 });
+});
 /* n = position in the current chain (0 for the first kill of a dash). */
 defSfx("kill", 0.012, (A, n) => {
   const f = noteAt(n);
@@ -210,9 +218,25 @@ defSfx("revive", 0.5, (A) => {
   [146.83, 220, 293.66, 440, 587.33, 880].forEach((f, i) => A.tone({ type: "triangle", f, dur: 0.5, vol: 0.12, delay: i * 0.06 }));
   A.noise({ type: "bandpass", f: 600, f2: 5000, dur: 0.6, vol: 0.2 });
 });
+defSfx("lastEmber", 0.5, (A) => {
+  A.tone({ type: "sine", f: 110, f2: 55, dur: 0.9, vol: 0.25 });
+  A.tone({ type: "sawtooth", f: 220, f2: 82, dur: 0.7, vol: 0.15 });
+  A.noise({ type: "lowpass", f: 450, dur: 0.8, vol: 0.2 });
+  [330, 247, 196].forEach((f, i) => A.tone({ type: "triangle", f, dur: 0.4, vol: 0.08, delay: i * 0.12 }));
+});
+defSfx("rekindle", 0.5, (A) => {
+  [196, 293.66, 392, 587.33, 784, 1174.66].forEach((f, i) => A.tone({ type: "triangle", f, dur: 0.6, vol: 0.13, delay: i * 0.05 }));
+  A.noise({ type: "bandpass", f: 800, f2: 6000, dur: 0.7, vol: 0.22 });
+  A.tone({ type: "sine", f: 73.42, f2: 146.83, dur: 0.5, vol: 0.28 });
+});
 defSfx("telegraph", 0.07, (A) => {
   A.tone({ type: "sine", f: 988, dur: 0.07, vol: 0.05 });
   A.tone({ type: "sine", f: 988, dur: 0.07, vol: 0.05, delay: 0.1 });
+});
+/* A quiet two-note chirp: "orders are being given" — the Coordinator's pulse. */
+defSfx("command", 0.25, (A) => {
+  A.tone({ type: "triangle", f: 740, f2: 587, dur: 0.11, vol: 0.06 });
+  A.tone({ type: "triangle", f: 587, dur: 0.1, vol: 0.045, delay: 0.09 });
 });
 defSfx("bolt", 0.04, (A) => {
   A.tone({ type: "square", f: 700, f2: 240, dur: 0.12, vol: 0.06 });

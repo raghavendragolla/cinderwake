@@ -30,6 +30,7 @@ function resumeGame() {
     Input.touch = window.matchMedia("(pointer: coarse)").matches && !window.matchMedia("(any-pointer: fine)").matches;
   } catch (e) { /* older browsers: assume mouse */ }
   UI.init();
+  if (typeof Cloud === "object" && Cloud.init) Cloud.init();
   UI.show("main");
   if (Save.recovered) UI.toast("Your save could not be read, so a fresh one was started. The old data was set aside.");
   if (!Save.storageOk) UI.toast("This browser is blocking storage. Progress will last only until the tab closes.");
@@ -76,7 +77,26 @@ function resumeGame() {
       if (k === "Digit3" || k === "Numpad3") return UI.pickCard(2);
       if (k === "KeyR") return UI.reroll();
     }
+    if (UI.cur === "loadout") {
+      if (k === "ArrowLeft" || k === "KeyA") { e.preventDefault(); return UI.stepLantern(-1); }
+      if (k === "ArrowRight" || k === "KeyD") { e.preventDefault(); return UI.stepLantern(1); }
+      if (k === "Digit1" || k === "Numpad1") { e.preventDefault(); return UI.selectLanternIndex(0); }
+      if (k === "Digit2" || k === "Numpad2") { e.preventDefault(); return UI.selectLanternIndex(1); }
+      if (k === "Digit3" || k === "Numpad3") { e.preventDefault(); return UI.selectLanternIndex(2); }
+      if (k === "Digit4" || k === "Numpad4") { e.preventDefault(); return UI.selectLanternIndex(3); }
+      if (k === "Digit5" || k === "Numpad5") { e.preventDefault(); return UI.selectLanternIndex(4); }
+    }
     if (G.state === "over" && UI.cur === "over" && k === "KeyR") return UI.act("again");
+    if (G.state === "checkpoint" && UI.cur === "checkpoint") {
+      if (k === "Space" || k === "Enter" || k === "KeyR") {
+        e.preventDefault();
+        return UI.act("retry-wave");
+      }
+      if (k === "Escape") {
+        e.preventDefault();
+        return UI.act("end-run");
+      }
+    }
     if (k === "Escape") {
       e.preventDefault();
       UI.back();

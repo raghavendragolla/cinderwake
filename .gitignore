@@ -16,3 +16,6 @@ Thumbs.db
 
 # Empty legacy subfolder if present
 /cinderwake/
+
+# Test screenshots
+*.png

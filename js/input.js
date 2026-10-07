@@ -14,7 +14,10 @@ const Input = {
   cx: 0, cy: 0, // last mouse position, client pixels
   mouseT: -99, // G.realT of the last mouse activity
   now: 0,
-  press: false, release: false, held: false,
+  press: false, // keyboard dash edge (keydown only; keyup never dashes)
+  release: false, // pointer dash edge (mouse or touch pointerup only)
+  touchPress: false, // touch aim-thumb down edge: may begin a charge, never a dash
+  held: false,
   touch: false, // most recent input came from a touch screen
   tap: false, // the last touch release was a tap, not a drag
   stick: { id: null, ox: 0, oy: 0, x: 0, y: 0 },
@@ -37,7 +40,8 @@ const Input = {
       this.keys[e.code] = false;
       if (DASH_KEYS[e.code] && this.keyDash) {
         this.keyDash = false;
-        if (this.capture) this.release = true;
+        // keyup only ends the gesture; it never dashes. A charge lantern
+        // notices `held` drop and fires from that, not from a release edge.
         this.held = false;
       }
     });
@@ -46,15 +50,20 @@ const Input = {
     canvas.addEventListener("pointerdown", (e) => {
       if (!this.capture) return;
       e.preventDefault();
+      try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
       if (e.pointerType === "mouse") {
         this.touch = false;
         this.cx = e.clientX;
         this.cy = e.clientY;
         this.mouseT = this.now;
         if (e.button === 0) {
-          this.press = true;
           this.held = true;
           this.mouseDash = true;
+          this.mouseDragging = true;
+        } else if (e.button === 2 && this.mouseDash) {
+          this.held = false;
+          this.mouseDash = false;
+          this.mouseDragging = false;
         }
         return;
       }
@@ -70,11 +79,14 @@ const Input = {
         a.id = e.pointerId;
         a.ox = a.x = e.clientX;
         a.oy = a.y = e.clientY;
-        this.press = true;
+        // touch-down begins a gesture: aim, or draw a charge lantern's bow.
+        // It must never dash by itself — the dash waits for the release.
+        this.touchPress = true;
+        this.tap = false;
         this.held = true;
       }
     });
-    canvas.addEventListener("pointermove", (e) => {
+    const onMove = (e) => {
       if (e.pointerType === "mouse") {
         this.cx = e.clientX;
         this.cy = e.clientY;
@@ -85,17 +97,28 @@ const Input = {
       if (e.pointerId === this.stick.id) {
         this.stick.x = e.clientX;
         this.stick.y = e.clientY;
+        const dx = this.stick.x - this.stick.ox, dy = this.stick.y - this.stick.oy;
+        const len = Math.hypot(dx, dy);
+        const maxR = 52;
+        if (len > maxR) {
+          this.stick.ox = this.stick.x - (dx / len) * maxR;
+          this.stick.oy = this.stick.y - (dy / len) * maxR;
+        }
       } else if (e.pointerId === this.aimS.id) {
         this.aimS.x = e.clientX;
         this.aimS.y = e.clientY;
       }
-    });
+    };
+    canvas.addEventListener("pointermove", onMove);
+    window.addEventListener("pointermove", onMove);
     const up = (e) => {
+      try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
       if (e.pointerType === "mouse") {
         if (e.button === 0 && this.mouseDash) {
           this.mouseDash = false;
-          if (this.capture) this.release = true;
+          this.mouseDragging = false;
           this.held = false;
+          if (this.capture) this.release = true;
         }
         return;
       }
@@ -113,7 +136,9 @@ const Input = {
       }
     };
     canvas.addEventListener("pointerup", up);
+    window.addEventListener("pointerup", up);
     canvas.addEventListener("pointercancel", up);
+    window.addEventListener("pointercancel", up);
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
     // Stop the page from scrolling or zooming under a thumb mid-run.
     canvas.addEventListener("touchstart", (e) => { if (this.capture) e.preventDefault(); }, { passive: false });
@@ -122,8 +147,8 @@ const Input = {
 
   reset() {
     this.keys = Object.create(null);
-    this.press = this.release = this.held = false;
-    this.keyDash = this.mouseDash = false;
+    this.press = this.release = this.touchPress = this.held = false;
+    this.keyDash = this.mouseDash = this.mouseDragging = false;
     this.stick.id = null;
     this.aimS.id = null;
   },
@@ -131,6 +156,7 @@ const Input = {
   endFrame() {
     this.press = false;
     this.release = false;
+    this.touchPress = false;
   },
 
   /** Unit-or-shorter move vector written into `out`. */
