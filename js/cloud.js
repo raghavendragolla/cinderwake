@@ -28,8 +28,14 @@ const Cloud = {
 
   /* ------------------------------------------------------------- Config */
   getBaseUrl() {
+    if (typeof window !== "undefined" && window.localStorage) {
+      const stored = localStorage.getItem("cinderwake.api.url");
+      if (stored && stored.includes("raghavendayadavgolla")) {
+        localStorage.removeItem("cinderwake.api.url");
+      }
+    }
     const cfg = (typeof window !== "undefined" && window.CINDERWAKE_CONFIG) || {};
-    const url = (cfg.apiBaseUrl || (window.localStorage && localStorage.getItem("cinderwake.api.url")) || "https://cinderwake-save.raghavendayadavgolla.workers.dev").trim();
+    const url = (cfg.apiBaseUrl || (window.localStorage && localStorage.getItem("cinderwake.api.url")) || "https://cinderwake-save.raghavendrayadavgolla.workers.dev").trim();
     return url.replace(/\/+$/, "");
   },
 
@@ -136,11 +142,18 @@ const Cloud = {
 
   /* ------------------------------------------------- Authentication APIs */
   async fetchMe() {
-    const data = await this.apiRequest("/api/me");
-    if (!data) return null;
-    if (data.username) return { username: data.username };
-    if (data.user && data.user.username) return { username: data.user.username };
-    return null;
+    try {
+      const data = await this.apiRequest("/api/me");
+      if (!data) return null;
+      if (data.username) return { username: data.username };
+      if (data.user && data.user.username) return { username: data.user.username };
+      return null;
+    } catch (e) {
+      if (e.status === 401 || (e.data && e.data.authenticated === false)) {
+        return null;
+      }
+      throw e;
+    }
   },
 
   async register(username, password) {
