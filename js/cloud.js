@@ -156,7 +156,7 @@ const Cloud = {
     }
   },
 
-  async register(username, password, shouldMigrate = false) {
+  async register(username, password, shouldMigrate = true) {
     username = (username || "").trim();
     if (!/^[a-zA-Z0-9_]{3,32}$/.test(username)) {
       throw new Error("Username must be 3–32 characters (letters, numbers, underscore).");
