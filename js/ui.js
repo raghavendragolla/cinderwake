@@ -664,6 +664,41 @@ const UI = {
       };
     }
 
+    const btnBackup = $("#btnCloudBackupDevice");
+    if (btnBackup) {
+      btnBackup.onclick = async () => {
+        btnBackup.disabled = true;
+        try {
+          const snapshot = Cloud.getStoredSnapshot() || Cloud.captureLocalSnapshot();
+          if (!snapshot || !Cloud.hasMeaningfulProgress(snapshot)) {
+            this.toast("No local progression found to back up.");
+            return;
+          }
+          const cloudSave = await Cloud.fetchCloudSave();
+          this.showConflictModal(snapshot, cloudSave || { cinders: 0, lifetimeScore: 0, unlockedLanterns: ["wick"] }, async (choice) => {
+            if (choice === "import") {
+              try {
+                await Cloud.importLocalProgress(snapshot);
+                this.toast("Progress imported successfully.");
+              } catch (err) {
+                this.toast(err.message || "Import failed.");
+              }
+            } else if (choice === "cloud") {
+              if (cloudSave) Cloud.applyCloudPayload(cloudSave);
+              Cloud.clearStoredSnapshot();
+              this.toast("Kept cloud account progression.");
+            }
+            this.buildCloud();
+            if (this.updateHearth) this.updateHearth();
+          });
+        } catch (err) {
+          this.toast(err.message || "Failed to inspect save data.");
+        } finally {
+          btnBackup.disabled = false;
+        }
+      };
+    }
+
     const btnLogin = $("#btnCloudLogin");
     if (btnLogin) {
       btnLogin.onclick = async () => {
@@ -674,9 +709,31 @@ const UI = {
         btnLogin.disabled = true;
         if (note) note.textContent = "Signing in...";
         try {
-          await Cloud.login(username, pwd);
+          const res = await Cloud.login(username, pwd);
           const pwdEl = $("#cloudPassword");
           if (pwdEl) pwdEl.value = "";
+          if (res && res.requiresDecision) {
+            this.showConflictModal(res.localSnapshot, res.cloudSave, async (choice) => {
+              if (choice === "import") {
+                try {
+                  await Cloud.importLocalProgress(res.localSnapshot);
+                  this.toast("Progress imported successfully.");
+                } catch (err) {
+                  this.toast(err.message || "Import failed.");
+                }
+              } else if (choice === "cloud") {
+                if (res.cloudSave) Cloud.applyCloudPayload(res.cloudSave);
+                Cloud.clearStoredSnapshot();
+                this.toast("Using cloud account progression.");
+              } else {
+                if (res.cloudSave) Cloud.applyCloudPayload(res.cloudSave);
+                this.toast("Signed in. Local snapshot retained.");
+              }
+              this.buildCloud();
+              if (this.updateHearth) this.updateHearth();
+            });
+            return;
+          }
           this.toast("Signed in as " + username);
           this.buildCloud();
         } catch (e) {
@@ -759,43 +816,68 @@ const UI = {
 
   showConflictModal(localData, cloudData, callback) {
     const box = $("#conflictComparison");
-    if (!box) { callback("merge"); return; }
+    if (!box) { callback("import"); return; }
+
+    localData = localData || {};
+    cloudData = cloudData || {};
+
+    const localLife = (localData.stats && typeof localData.stats.lifetimeScore === "number")
+      ? localData.stats.lifetimeScore
+      : (typeof localData.lifetimeScore === "number" ? localData.lifetimeScore : 0);
+    const cloudLife = (typeof cloudData.lifetimeScore === "number")
+      ? cloudData.lifetimeScore
+      : (typeof cloudData.lifetime_score === "number" ? cloudData.lifetime_score : ((cloudData.stats && cloudData.stats.lifetimeScore) || 0));
+
+    const localCinders = Number(localData.cinders) || 0;
+    const cloudCinders = Number(cloudData.cinders) || 0;
+
+    const localLanterns = Array.isArray(localData.unlockedLanterns) ? localData.unlockedLanterns : (Array.isArray(localData.lanterns) ? localData.lanterns : ["wick"]);
+    const cloudLanterns = Array.isArray(cloudData.unlockedLanterns || cloudData.unlocked_lanterns) ? (cloudData.unlockedLanterns || cloudData.unlocked_lanterns) : ["wick"];
+
     box.innerHTML = `
       <div class="conflict-card">
-        <h4>Local Browser Save</h4>
+        <h4>Local:</h4>
         <dl>
-          <dt>Cinders</dt><dd>${fmt(localData.cinders || 0)}</dd>
-          <dt>Lifetime Score</dt><dd>${fmt((localData.stats && localData.stats.lifetimeScore) || 0)}</dd>
-          <dt>Lanterns</dt><dd>${(localData.lanterns || []).length}</dd>
-          <dt>Runs</dt><dd>${(localData.stats && localData.stats.runs) || 0}</dd>
+          <dt>Lifetime Score</dt><dd>${fmt(localLife)}</dd>
+          <dt>Cinders</dt><dd>${fmt(localCinders)}</dd>
+          <dt>Lanterns Unlocked</dt><dd>${localLanterns.length}</dd>
         </dl>
       </div>
       <div class="conflict-card">
-        <h4>Cloud Account Save</h4>
+        <h4>Cloud:</h4>
         <dl>
-          <dt>Cinders</dt><dd>${fmt(cloudData.cinders || 0)}</dd>
-          <dt>Lifetime Score</dt><dd>${fmt(cloudData.lifetime_score || (cloudData.stats && cloudData.stats.lifetimeScore) || 0)}</dd>
-          <dt>Lanterns</dt><dd>${(cloudData.unlocked_lanterns || []).length}</dd>
-          <dt>Runs</dt><dd>${(cloudData.stats && cloudData.stats.runs) || 0}</dd>
+          <dt>Lifetime Score</dt><dd>${fmt(cloudLife)}</dd>
+          <dt>Cinders</dt><dd>${fmt(cloudCinders)}</dd>
+          <dt>Lanterns Unlocked</dt><dd>${cloudLanterns.length}</dd>
         </dl>
       </div>
     `;
 
-    $("#btnConflictLocal").onclick = () => {
-      this.hide();
-      this.show("cloud");
-      callback("local");
-    };
-    $("#btnConflictCloud").onclick = () => {
-      this.hide();
-      this.show("cloud");
-      callback("cloud");
-    };
-    $("#btnConflictMerge").onclick = () => {
-      this.hide();
-      this.show("cloud");
-      callback("merge");
-    };
+    const btnImport = $("#btnConflictImport") || $("#btnConflictLocal");
+    const btnKeepCloud = $("#btnConflictKeepCloud") || $("#btnConflictCloud");
+    const btnCancel = $("#btnConflictCancel") || $("#btnConflictMerge");
+
+    if (btnImport) {
+      btnImport.onclick = () => {
+        this.hide();
+        this.show("cloud");
+        callback("import");
+      };
+    }
+    if (btnKeepCloud) {
+      btnKeepCloud.onclick = () => {
+        this.hide();
+        this.show("cloud");
+        callback("cloud");
+      };
+    }
+    if (btnCancel) {
+      btnCancel.onclick = () => {
+        this.hide();
+        this.show("cloud");
+        callback("cancel");
+      };
+    }
 
     this.show("conflict");
   },

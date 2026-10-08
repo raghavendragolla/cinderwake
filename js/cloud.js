@@ -46,7 +46,7 @@ const Cloud = {
   setStatus(s) {
     this.status = s;
     for (const cb of this.callbacks) {
-      try { cb(this.status, this.user); } catch (e) {}
+      try { cb(this.status, this.user); } catch (e) { }
     }
   },
 
@@ -123,7 +123,7 @@ const Cloud = {
 
     if (!res.ok) {
       let errData = null;
-      try { errData = await res.json(); } catch (e) {}
+      try { errData = await res.json(); } catch (e) { }
       const msg = (errData && (errData.error || errData.message || errData.msg)) || res.statusText || ("HTTP " + res.status);
       const err = new Error(msg);
       err.status = res.status;
@@ -198,11 +198,119 @@ const Cloud = {
     return { ok: true, user: this.user };
   },
 
+  /* ------------------------------------------- Local Migration Snapshot */
+  captureLocalSnapshot() {
+    const local = (typeof Save !== "undefined" && Save.data) || null;
+    if (!local || !this.hasMeaningfulProgress(local)) return null;
+    const s = local.stats || {};
+    const life = Math.max(0, Math.floor((typeof s.lifetimeScore === "number") ? s.lifetimeScore : (typeof local.lifetimeScore === "number" ? local.lifetimeScore : 0)));
+    const cinders = Math.max(0, Math.floor(Number(local.cinders) || 0));
+    const rawLanterns = Array.isArray(local.unlockedLanterns) ? local.unlockedLanterns : (Array.isArray(local.lanterns) ? local.lanterns : ["wick"]);
+    const cleanLanterns = rawLanterns.filter(k => typeof k === "string" && k);
+
+    // Bestiary
+    const bestiaryList = [];
+    if (local.enemyKills && typeof local.enemyKills === "object") {
+      for (const k in local.enemyKills) { if (local.enemyKills[k]) bestiaryList.push(k); }
+    }
+    if (local.bossDefeats && typeof local.bossDefeats === "object") {
+      for (const k in local.bossDefeats) { if (local.bossDefeats[k] && !bestiaryList.includes(k)) bestiaryList.push(k); }
+    }
+    if (Array.isArray(local.bestiary)) {
+      for (const k of local.bestiary) { if (typeof k === "string" && !bestiaryList.includes(k)) bestiaryList.push(k); }
+    }
+
+    // Achievements
+    const achList = [];
+    if (local.ach && typeof local.ach === "object") {
+      for (const k in local.ach) { if (local.ach[k]) achList.push(k); }
+    }
+    if (Array.isArray(local.achievements)) {
+      for (const k of local.achievements) { if (typeof k === "string" && !achList.includes(k)) achList.push(k); }
+    }
+
+    // Synergies
+    const synList = [];
+    if (local.seenSynergy && typeof local.seenSynergy === "object") {
+      for (const k in local.seenSynergy) { if (local.seenSynergy[k]) synList.push(k); }
+    }
+    if (Array.isArray(local.synergies)) {
+      for (const k of local.synergies) { if (typeof k === "string" && !synList.includes(k)) synList.push(k); }
+    }
+
+    const snapshot = {
+      lifetimeScore: life,
+      cinders,
+      selectedLantern: String(local.lantern || local.selectedLantern || "wick"),
+      unlockedLanterns: cleanLanterns.length ? [...new Set(cleanLanterns)] : ["wick"],
+      lanternMastery: Object.assign({}, local.byLantern || local.lanternMastery || {}),
+      achievements: achList,
+      bestiary: bestiaryList,
+      synergies: synList,
+      duskProgress: Math.max(0, Math.floor(Number(local.duskMax || local.duskProgress) || 0)),
+      saveVersion: Math.max(1, Math.floor(Number(local.v || local.saveVersion) || 1)),
+      capturedAt: Date.now(),
+    };
+
+    if (typeof window !== "undefined" && window.localStorage) {
+      try { localStorage.setItem("cinderwake.migration.snapshot", JSON.stringify(snapshot)); } catch (_) {}
+    }
+    this.localSnapshot = snapshot;
+    return snapshot;
+  },
+
+  getStoredSnapshot() {
+    if (this.localSnapshot) return this.localSnapshot;
+    if (typeof window !== "undefined" && window.localStorage) {
+      const str = localStorage.getItem("cinderwake.migration.snapshot");
+      if (str) {
+        try {
+          const parsed = JSON.parse(str);
+          this.localSnapshot = parsed;
+          return parsed;
+        } catch (_) {}
+      }
+    }
+    return null;
+  },
+
+  clearStoredSnapshot() {
+    this.localSnapshot = null;
+    if (typeof window !== "undefined" && window.localStorage) {
+      localStorage.removeItem("cinderwake.migration.snapshot");
+    }
+  },
+
+  shouldPromptMigration(snapshot, cloudSave) {
+    if (!snapshot || !this.hasMeaningfulProgress(snapshot)) return false;
+    if (!cloudSave || !this.hasMeaningfulProgress(cloudSave)) return true;
+
+    const cloudLife = (typeof cloudSave.lifetimeScore === "number") ? cloudSave.lifetimeScore : (cloudSave.lifetime_score || 0);
+    const cloudCinders = Number(cloudSave.cinders) || 0;
+    const cloudLanterns = Array.isArray(cloudSave.unlockedLanterns || cloudSave.unlocked_lanterns) ? (cloudSave.unlockedLanterns || cloudSave.unlocked_lanterns) : [];
+    const cloudAch = Array.isArray(cloudSave.achievements) ? cloudSave.achievements : Object.keys(cloudSave.achievements || {});
+
+    if (snapshot.cinders > cloudCinders) return true;
+    if (snapshot.lifetimeScore > cloudLife) return true;
+    if (snapshot.unlockedLanterns.length > cloudLanterns.length) return true;
+    if (snapshot.achievements.length > cloudAch.length) return true;
+
+    // Check if snapshot contains any unlocked lanterns missing in cloud
+    for (const id of snapshot.unlockedLanterns) {
+      if (!cloudLanterns.includes(id)) return true;
+    }
+    return false;
+  },
+
   async login(username, password) {
     username = (username || "").trim();
     if (!username) throw new Error("Please enter your username.");
     if (!password) throw new Error("Please enter your password.");
 
+    // 1. Capture local migration snapshot BEFORE cloud login overwrites local state
+    const snapshot = this.captureLocalSnapshot();
+
+    // 2. Perform authentication with existing account
     const res = await this.apiRequest("/api/login", {
       method: "POST",
       body: { username, password },
@@ -215,10 +323,61 @@ const Cloud = {
       localStorage.setItem(CLOUD_CACHED_USER_KEY, username);
     }
 
-    // Normal login flow: CLOUD -> GAME STATE -> LOCAL CACHE
-    await this.pullAndApply();
+    // 3. Fetch current cloud save
+    let cloudSave = null;
+    try {
+      cloudSave = await this.fetchCloudSave();
+    } catch (_) {}
 
-    return { ok: true, user: this.user };
+    // 4. Compare local snapshot with cloud save — if local has progress, prompt confirmation!
+    if (this.shouldPromptMigration(snapshot, cloudSave)) {
+      return {
+        ok: true,
+        user: this.user,
+        requiresDecision: true,
+        localSnapshot: snapshot,
+        cloudSave: cloudSave || { cinders: 0, lifetimeScore: 0, unlockedLanterns: ["wick"] },
+      };
+    }
+
+    // Normal login flow: CLOUD -> GAME STATE -> LOCAL CACHE
+    if (cloudSave) {
+      this.applyCloudPayload(cloudSave);
+    }
+    this.clearStoredSnapshot();
+
+    return { ok: true, user: this.user, requiresDecision: false };
+  },
+
+  async importLocalProgress(customSnapshot = null) {
+    if (this.mode !== "account" || !this.user) {
+      throw new Error("You must be logged in to import progress.");
+    }
+
+    const snapshot = customSnapshot || this.getStoredSnapshot() || this.captureLocalSnapshot();
+    if (!snapshot || !this.hasMeaningfulProgress(snapshot)) {
+      throw new Error("No local progression found to import.");
+    }
+
+    // Safety: retain in-memory copy of cloud progression before push
+    let cloudBackup = null;
+    try {
+      cloudBackup = await this.fetchCloudSave();
+    } catch (_) {}
+
+    this.setStatus("syncing");
+
+    try {
+      const payload = this.toCloudPayload(snapshot);
+      await this.pushCloudSave(payload);
+      await this.pullAndApply();
+      this.clearStoredSnapshot();
+      this.setStatus("connected");
+      return { ok: true };
+    } catch (err) {
+      this.setStatus("connected");
+      throw new Error("Failed to upload local progression: " + (err.message || "Network error"));
+    }
   },
 
   async logout() {
@@ -331,7 +490,9 @@ const Cloud = {
       lifetimeScore: Math.max(0, Math.floor(life)),
       cinders: Math.max(0, Math.floor(Number(local.cinders) || 0)),
       selectedLantern: String(local.lantern || local.selectedLantern || "wick"),
-      unlockedLanterns: Array.isArray(local.lanterns) && local.lanterns.length ? [...new Set(local.lanterns)] : ["wick"],
+      unlockedLanterns: (Array.isArray(local.unlockedLanterns) && local.unlockedLanterns.length)
+        ? [...new Set(local.unlockedLanterns.filter(k => typeof k === "string" && k))]
+        : (Array.isArray(local.lanterns) && local.lanterns.length ? [...new Set(local.lanterns.filter(k => typeof k === "string" && k))] : ["wick"]),
       lanternMastery: local.byLantern || local.lanternMastery || {},
       achievements: achList,
       bestiary: bestiaryList,
@@ -417,7 +578,7 @@ const Cloud = {
     // Persist to local cache immediately
     Save._set(SAVE_KEY, JSON.stringify(Save.data));
     if (typeof UI === "object" && UI.updateHearth) {
-      try { UI.updateHearth(); } catch (_) {}
+      try { UI.updateHearth(); } catch (_) { }
     }
   },
 

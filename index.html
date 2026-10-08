@@ -190,8 +190,9 @@
 
           <!-- Authenticated Account Controls -->
           <div id="cloudAuthedControls" hidden>
-            <div class="row-center">
+            <div class="row-center" style="gap:8px; flex-wrap:wrap;">
               <button type="button" id="btnCloudSync" class="btn btn-primary">Sync Now</button>
+              <button type="button" id="btnCloudBackupDevice" class="btn">Back Up This Device</button>
               <button type="button" id="btnCloudLogout" class="btn">Logout</button>
             </div>
             <p id="cloudSyncNote" class="note"></p>
@@ -229,15 +230,15 @@
     <!-- Cloud Conflict Resolution Modal -->
     <section id="scr-conflict" class="screen screen-dim" hidden>
       <div class="panel panel-narrow center">
-        <h2 class="big">Local progress found</h2>
-        <p class="lede">Both your local browser and cloud account have saved progression. Choose how to synchronize:</p>
+        <h2 class="big">Local progression found</h2>
+        <p class="lede">Use this device's progression for your cloud account?</p>
         <div id="conflictComparison" class="conflict-comparison"></div>
-        <div class="row-center">
-          <button type="button" id="btnConflictLocal" class="btn">Use Local Progress</button>
-          <button type="button" id="btnConflictCloud" class="btn">Use Cloud Progress</button>
-          <button type="button" id="btnConflictMerge" class="btn btn-primary">Merge (Keep Both)</button>
+        <div class="row-center" style="gap:8px; flex-wrap:wrap;">
+          <button type="button" id="btnConflictImport" class="btn btn-primary">Import Local Progress</button>
+          <button type="button" id="btnConflictKeepCloud" class="btn">Keep Cloud Progress</button>
+          <button type="button" id="btnConflictCancel" class="btn">Cancel</button>
         </div>
-        <p class="note">Merging combines unlocked lanterns and achievements without duplicating Cinders or score.</p>
+        <p class="note" style="margin-top:10px; font-size:12px; color:var(--col-ash,#8a8a9a);">Importing transfers this device's persistent Cinders, lifetime score, unlocked lanterns, and achievements to your cloud account.</p>
       </div>
     </section>
 
