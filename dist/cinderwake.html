@@ -3073,10 +3073,9 @@ const Input = {
     });
     window.addEventListener("blur", () => this.reset());
 
-    canvas.addEventListener("pointerdown", (e) => {
+    const onDown = (e) => {
       if (!this.capture) return;
-      e.preventDefault();
-      try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+      if (e.target && e.target.closest && e.target.closest("button")) return;
       if (e.pointerType === "mouse") {
         this.touch = false;
         this.cx = e.clientX;
@@ -3093,6 +3092,9 @@ const Input = {
         }
         return;
       }
+      if (e.target !== canvas) return;
+      e.preventDefault();
+      try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
       this.touch = true;
       const left = e.clientX < window.innerWidth * 0.45;
       if (left && this.stick.id === null) {
@@ -3111,7 +3113,9 @@ const Input = {
         this.tap = false;
         this.held = true;
       }
-    });
+    };
+    canvas.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointerdown", onDown);
     const onMove = (e) => {
       if (e.pointerType === "mouse") {
         this.cx = e.clientX;
@@ -8799,11 +8803,11 @@ const Render = {
     const can = p.flame + 0.001 >= cost;
     const fr = clamp(p.flame / S.maxFlame, 0, 1);
 
-    // aim guide: where this dash would end — the same length rule the
-    // dash itself uses, so the guide can never promise a longer cut
+    // aim guide: draggable dotted line following mouse across entire screen
     if (Save.data.settings.aimGuide && !p.dash && G.state === "play") {
       let d = S.dashDist;
-      if (L.charge) d = lerp(L.distMin, S.dashDist, p.charging ? p.charge : 0);
+      if (Input.mouseActive()) d = Math.max(20, p.aimDist);
+      else if (L.charge) d = lerp(L.distMin, S.dashDist, p.charging ? p.charge : 0);
       else if (L.blink) d = blinkLengthFor(p);
       else d = dashLengthFor(p);
       const ex = clamp(x + Math.cos(p.aim) * d, 14, G.W - 14), ey = clamp(y + Math.sin(p.aim) * d, 14, G.H - 14);
@@ -8816,8 +8820,9 @@ const Render = {
       ctx.lineWidth = L.blink ? 1.2 : 1.6 + (p.charging ? p.charge * 3 : 0);
       ctx.setLineDash([3, 7]);
       ctx.lineCap = "round";
+      const startDist = Math.min(24, d * 0.5);
       ctx.beginPath();
-      ctx.moveTo(x + Math.cos(p.aim) * 30, y + Math.sin(p.aim) * 30);
+      ctx.moveTo(x + Math.cos(p.aim) * startDist, y + Math.sin(p.aim) * startDist);
       ctx.lineTo(ex, ey);
       ctx.stroke();
       ctx.setLineDash([]);

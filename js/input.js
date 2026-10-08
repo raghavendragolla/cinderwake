@@ -47,10 +47,9 @@ const Input = {
     });
     window.addEventListener("blur", () => this.reset());
 
-    canvas.addEventListener("pointerdown", (e) => {
+    const onDown = (e) => {
       if (!this.capture) return;
-      e.preventDefault();
-      try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+      if (e.target && e.target.closest && e.target.closest("button")) return;
       if (e.pointerType === "mouse") {
         this.touch = false;
         this.cx = e.clientX;
@@ -67,6 +66,9 @@ const Input = {
         }
         return;
       }
+      if (e.target !== canvas) return;
+      e.preventDefault();
+      try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
       this.touch = true;
       const left = e.clientX < window.innerWidth * 0.45;
       if (left && this.stick.id === null) {
@@ -85,7 +87,9 @@ const Input = {
         this.tap = false;
         this.held = true;
       }
-    });
+    };
+    canvas.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointerdown", onDown);
     const onMove = (e) => {
       if (e.pointerType === "mouse") {
         this.cx = e.clientX;

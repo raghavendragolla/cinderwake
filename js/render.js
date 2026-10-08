@@ -1007,11 +1007,11 @@ const Render = {
     const can = p.flame + 0.001 >= cost;
     const fr = clamp(p.flame / S.maxFlame, 0, 1);
 
-    // aim guide: where this dash would end — the same length rule the
-    // dash itself uses, so the guide can never promise a longer cut
+    // aim guide: draggable dotted line following mouse across entire screen
     if (Save.data.settings.aimGuide && !p.dash && G.state === "play") {
       let d = S.dashDist;
-      if (L.charge) d = lerp(L.distMin, S.dashDist, p.charging ? p.charge : 0);
+      if (Input.mouseActive()) d = Math.max(20, p.aimDist);
+      else if (L.charge) d = lerp(L.distMin, S.dashDist, p.charging ? p.charge : 0);
       else if (L.blink) d = blinkLengthFor(p);
       else d = dashLengthFor(p);
       const ex = clamp(x + Math.cos(p.aim) * d, 14, G.W - 14), ey = clamp(y + Math.sin(p.aim) * d, 14, G.H - 14);
@@ -1024,8 +1024,9 @@ const Render = {
       ctx.lineWidth = L.blink ? 1.2 : 1.6 + (p.charging ? p.charge * 3 : 0);
       ctx.setLineDash([3, 7]);
       ctx.lineCap = "round";
+      const startDist = Math.min(24, d * 0.5);
       ctx.beginPath();
-      ctx.moveTo(x + Math.cos(p.aim) * 30, y + Math.sin(p.aim) * 30);
+      ctx.moveTo(x + Math.cos(p.aim) * startDist, y + Math.sin(p.aim) * startDist);
       ctx.lineTo(ex, ey);
       ctx.stroke();
       ctx.setLineDash([]);
