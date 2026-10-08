@@ -1007,7 +1007,7 @@ const Render = {
     const can = p.flame + 0.001 >= cost;
     const fr = clamp(p.flame / S.maxFlame, 0, 1);
 
-    // aim guide: draggable dotted line following mouse across entire screen
+    // HARD RULE: Do NOT change in future updates. Keep aim guide draggable across entire screen by mouse.
     if (Save.data.settings.aimGuide && !p.dash && G.state === "play") {
       let d = S.dashDist;
       if (Input.mouseActive()) d = Math.max(20, p.aimDist);
